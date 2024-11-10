@@ -126,6 +126,9 @@ dependencies {
   api "com.google.protobuf:protobuf-java:${versions.protobuf}"
   api "jakarta.annotation:jakarta.annotation-api:${versions.jakarta_annotation}"
 
+  // kafka
+  api "org.apache.kafka:kafka-clients:2.8.2"
+
   // https://mvnrepository.com/artifact/org.roaringbitmap/RoaringBitmap
   implementation 'org.roaringbitmap:RoaringBitmap:1.3.0'
 
