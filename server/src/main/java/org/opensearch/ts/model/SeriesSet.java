@@ -9,12 +9,9 @@
 package org.opensearch.ts.model;
 
 /**
- * Value type.
+ * A set of series
  */
-public enum ValueType {
-    // we name it float64 instead of double to be consistent with Prometheus terminology
-    FLOAT64,
-    HISTOGRAM,
-    FLOAT64_HISTOGRAM,
-
+public interface SeriesSet {
+    Series next();
+    boolean hasNext();
 }

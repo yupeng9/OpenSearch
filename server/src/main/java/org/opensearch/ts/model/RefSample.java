@@ -8,7 +8,7 @@
 
 package org.opensearch.ts.model;
 
-public class RefSample extends DoubleSample {
+public class RefSample extends FloatSample {
     private long reference;
 
     public RefSample(long reference, long timestamp, double value) {

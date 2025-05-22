@@ -15,4 +15,10 @@ public interface Iterator {
     boolean hasNext();
 
     Sample next();
+
+    /**
+     * advance the iterator forward to the first sample with a timestamp equal to or greater than the given timestamp.
+     *
+     */
+    Sample seek(long timestamp);
 }

@@ -8,6 +8,7 @@
 
 package org.opensearch.ts.head;
 
+import org.opensearch.ts.chunks.Chunk;
 import org.opensearch.ts.chunks.ChunkAppender;
 import org.opensearch.ts.chunks.Encoding;
 import org.opensearch.ts.chunks.RawChunk;
@@ -91,5 +92,14 @@ public class MemSeries {
 
     private long rangeForTimestamp(long t, long chunkRange) {
         return (t/chunkRange)*chunkRange+chunkRange;
+    }
+
+    /**
+     * returns the chunk for the given id from memory. if the chunk is on disk, then it needs to mmap it.
+     */
+    public MemChunk getChunk(int chunkId) {
+        // TODO: support the mmapped chunk
+        // TODO: support the offset mgmt for head
+        return headChunk.atOffset(chunkId);
     }
 }

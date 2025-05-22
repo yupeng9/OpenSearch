@@ -25,10 +25,11 @@ public class HeadAppender implements Appender {
     private boolean closed;
 
     // TODO: do we need to track labels as in prometheus?
-    private List<Long> seriesRefs;
-    private List<MemSeries> seriesList;
-    private List<RefSample> refSamples;
-    private List<MemSeries> sampleSeries;
+    // TODO: can we simplify this?
+    private List<Long> seriesRefs;  // holds ref id to the newly created series
+    private List<MemSeries> seriesList; // pointers to the new memSeries, same order as seriesRefs
+    private List<RefSample> refSamples; // samples along with the series reference
+    private List<MemSeries> sampleSeries; // pointers to the series corresponding to the samples
 
     public HeadAppender(Head head, long minValidTimestamp, long minTime, long maxTime) {
         this.head = head;

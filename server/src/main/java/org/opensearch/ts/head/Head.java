@@ -8,6 +8,7 @@
 
 package org.opensearch.ts.head;
 
+import org.opensearch.ts.chunks.Chunk;
 import org.opensearch.ts.model.Labels;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -66,5 +67,20 @@ public class Head {
         stripeSeries.set(hash, newSeries);
         numSeries.incrementAndGet();
         return newSeries;
+    }
+
+    public HeadChunkReader chunksRange(long minTime, long maxTime) {
+        long mint = minTime;
+        if(this.minTime > minTime) {
+            mint = this.minTime;
+        }
+        return new HeadChunkReader(this, mint, maxTime);
+    }
+
+    public Chunk chunkFromSeries(MemSeries series, int headChunkId, long minTime, long maxTime) {
+        MemChunk chunk = series.getChunk(headChunkId);
+        // TODO: calc time range coverage
+
+        return chunk.getChunk();
     }
 }

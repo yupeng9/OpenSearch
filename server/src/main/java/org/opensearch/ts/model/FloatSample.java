@@ -8,12 +8,12 @@
 
 package org.opensearch.ts.model;
 
-public class DoubleSample implements Sample {
+public class FloatSample implements Sample {
 
     private final long timestamp;
     private final double value;
 
-    public DoubleSample(long timestamp, double value) {
+    public FloatSample(long timestamp, double value) {
         this.timestamp = timestamp;
         this.value = value;
     }
@@ -25,7 +25,7 @@ public class DoubleSample implements Sample {
 
     @Override
     public ValueType valueType() {
-        return ValueType.DOUBLE;
+        return ValueType.FLOAT64;
     }
 
     public double getValue() {

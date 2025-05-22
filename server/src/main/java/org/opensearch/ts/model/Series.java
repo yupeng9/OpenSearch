@@ -9,12 +9,12 @@
 package org.opensearch.ts.model;
 
 /**
- * Value type.
+ * Series exposes a single time series and allows iterating over the samples.
+ *
+ * TODO: can we simplify this since we store labels in lucene index?
  */
-public enum ValueType {
-    // we name it float64 instead of double to be consistent with Prometheus terminology
-    FLOAT64,
-    HISTOGRAM,
-    FLOAT64_HISTOGRAM,
+public interface Series {
+    Labels getLabels();
 
+    Iterator iterator();
 }
