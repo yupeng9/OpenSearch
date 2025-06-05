@@ -15,6 +15,11 @@ public class XORChunk implements Chunk {
     }
 
     @Override
+    public int bytesSize() {
+        throw new UnsupportedOperationException("Not implemented yet");
+    }
+
+    @Override
     public Encoding encoding() {
         return Encoding.XOR;
     }

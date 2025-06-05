@@ -14,7 +14,7 @@ import org.junit.Assert;
 
 public class MetricsEngineTests extends OpenSearchTestCase {
     public void testEngineAppender() {
-        MetricsEngine engine = new MetricsEngine();
+        MetricsEngine engine = new MetricsEngine(createTempDir("ts"));
         MetricsEngine.MetricsAppender appender = engine.newAppender();
 
         long ref1 = appender.append(0, Labels.fromStrings("a", "b"), 123, 0.0);
@@ -25,6 +25,8 @@ public class MetricsEngineTests extends OpenSearchTestCase {
         Assert.assertEquals(ref1, ref2);
 
         appender.commit();
+
+        engine.close();
     }
 
 }

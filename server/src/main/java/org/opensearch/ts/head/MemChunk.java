@@ -10,7 +10,10 @@ package org.opensearch.ts.head;
 
 import org.opensearch.ts.chunks.Chunk;
 
-public class MemChunk {
+/*
+ * MemChunk represents a chunk in the head block. Chunk may be in memory, or mmapped.
+ */
+public class MemChunk implements HeadChunk {
     private Chunk chunk;
     private long minTimestamp;
     private long maxTimestamp;
@@ -62,23 +65,29 @@ public class MemChunk {
         this.chunk = chunk;
     }
 
-    public long getMinTime() {
+    @Override
+    public long getMinTimestamp() {
         return minTimestamp;
     }
 
-    public void setMinTime(long timestamp) {
+    public void setMinTimestamp(long timestamp) {
         this.minTimestamp = timestamp;
     }
 
-    public long getMaxTime() {
+    @Override
+    public long getMaxTimestamp() {
         return maxTimestamp;
     }
 
-    public void setMaxTime(long timestamp) {
+    public void setMaxTimestamp(long timestamp) {
         this.maxTimestamp = timestamp;
     }
 
     public MemChunk getPrev() {
         return prev;
+    }
+
+    public void truncatePrev() {
+        this.prev = null;
     }
 }

@@ -10,10 +10,7 @@ package org.opensearch.ts.head;
 
 import org.opensearch.ts.model.Labels;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * A collection of series. The series can be looked up by either hash or ID.
@@ -25,7 +22,6 @@ public class StripeSeries {
 
     public StripeSeries() {
         series = new HashMap<>();
-        ;
         seriesHashmap = new SeriesHashmap();
     }
 
@@ -37,12 +33,29 @@ public class StripeSeries {
         return seriesHashmap.get(hash, labels);
     }
 
+    public Collection<MemSeries> getSeries() {
+        return series.values();
+    }
+
+    /**
+     * TODO: Garbage collection for series. (1) truncate series chunks (2) remove empty series (3) update postings? (4) cleanup WAL
+     * currently only returns the min in-use mmap file index so unused files may be deleted
+     */
+    public int gc(long minTimestamp) {
+        // TODO truncate series chunks based on minTimestamp
+        int minFileIndex = Integer.MAX_VALUE;
+        for (MemSeries series : series.values()) {
+            minFileIndex = Math.min(minFileIndex, series.truncateBefore(minTimestamp));
+        }
+        return minFileIndex;
+    }
+
     public void set(long hash, MemSeries s) {
         series.put(s.getReference(), s);
         seriesHashmap.set(hash, s);
     }
 
-    public class SeriesHashmap {
+    public static class SeriesHashmap {
         private Map<Long, MemSeries> unique;
         private Map<Long, List<MemSeries>> conflicts;
 

@@ -49,7 +49,6 @@ public class HeadAppender implements Appender {
         MemSeries series = head.getStripeSeries().getById(seriesRef);
         if (series == null) {
             series = createSeries(labels);
-            ;
         }
         if (timestamp < minTime) {
             minTime = timestamp;
@@ -76,7 +75,7 @@ public class HeadAppender implements Appender {
 
     @Override
     public void commit() {
-        if(closed) {
+        if (closed) {
             throw new IllegalStateException("Appender is closed");
         }
 
@@ -88,22 +87,27 @@ public class HeadAppender implements Appender {
     }
 
     protected void commitSamples(CommitContext context) {
-        for(int i=0;i<refSamples.size();i++) {
+        for (int i = 0; i < refSamples.size(); i++) {
             RefSample refSample = refSamples.get(i);
             MemSeries s = sampleSeries.get(i);
-            // TODO: ooo handling
+
+            if (s.isOOO(refSample.getTimestamp())) {
+                return; // TODO: ooo handling - for now skip
+            }
+
             // TODO: appender isolation handling
             boolean chunkCreated = s.append(refSample.getTimestamp(), refSample.getValue(), context.options);
-            // TODO: update metrics
+            if (chunkCreated) {
+                // TODO: update metrics
+            }
             s.commit();
         }
     }
-
 
     @Override
     public void abort() {
 
     }
 
-    public record CommitContext(ChunkOptions options){}
+    public record CommitContext(ChunkOptions options) {}
 }

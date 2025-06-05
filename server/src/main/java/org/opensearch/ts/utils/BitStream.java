@@ -15,6 +15,7 @@ public class BitStream {
     private byte[] buffer;
     private int bytePos;
     private int bitPos; // 0–7
+    private boolean immutable; // TODO add iface and split the class
 
     private static final int DEFAULT_CAPACITY = 64;
 
@@ -22,6 +23,12 @@ public class BitStream {
         this.buffer = new byte[DEFAULT_CAPACITY];
         this.bytePos = 0;
         this.bitPos = 0;
+    }
+
+    public BitStream(byte[] bytes) {
+        this.buffer = bytes;
+        this.bytePos = bytes.length;
+        this.immutable = true;
     }
 
     // Writes 'numBits' (<=32) from 'value' into the stream
@@ -58,6 +65,9 @@ public class BitStream {
     }
 
     public byte[] toByteArray() {
+        if (immutable) {
+            return buffer;
+        }
         int totalBytes = bytePos + (bitPos > 0 ? 1 : 0);
         return Arrays.copyOf(buffer, totalBytes);
     }

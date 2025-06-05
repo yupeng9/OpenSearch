@@ -13,9 +13,11 @@ package org.opensearch.ts.chunks;
  */
 public interface Chunk {
     /**
-     * @return the underlying bytes of the chunk
+     * @return the underlying bytes of the chunk. May perform copy, use bytesSize() if you only need the size.
      */
     byte[] bytes();
+
+    int bytesSize();
 
     Encoding encoding();
 
