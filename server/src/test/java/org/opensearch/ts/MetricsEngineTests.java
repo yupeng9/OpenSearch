@@ -9,6 +9,9 @@
 package org.opensearch.ts;
 
 import org.opensearch.test.OpenSearchTestCase;
+import org.opensearch.ts.chunks.Chunk;
+import org.opensearch.ts.chunks.Meta;
+import org.opensearch.ts.head.RangeHead;
 import org.opensearch.ts.model.Labels;
 import org.junit.Assert;
 
@@ -25,8 +28,11 @@ public class MetricsEngineTests extends OpenSearchTestCase {
         Assert.assertEquals(ref1, ref2);
 
         appender.commit();
-
         engine.close();
+
+        // query
+        RangeHead head = new RangeHead(engine.getHead(), 0, 1000);
+        Chunk chunk = head.chunks().readChunk(new Meta(0,null, 120, 199));
     }
 
 }

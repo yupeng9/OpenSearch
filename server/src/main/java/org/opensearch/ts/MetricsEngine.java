@@ -10,10 +10,8 @@ package org.opensearch.ts;
 
 import org.opensearch.ts.head.Head;
 import org.opensearch.ts.head.HeadAppender;
-import org.opensearch.ts.head.MemSeries;
 import org.opensearch.ts.model.Labels;
 
-import java.io.File;
 import java.nio.file.Path;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -52,6 +50,10 @@ public class MetricsEngine {
 
     public void close() {
         executor.close();
+    }
+
+    protected Head getHead() {
+        return head;
     }
 
     public class MetricsAppender implements Appender {
