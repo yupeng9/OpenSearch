@@ -432,6 +432,13 @@ public final class IndexSettings {
         Property.IndexScope
     );
 
+    public static final Setting<Boolean> INDEX_METRICS_SETTING = Setting.boolSetting(
+        "index.metrics.enabled",
+        false,
+        Property.IndexScope,
+        Property.Final
+    );
+
     /**
      * Specifies if the index should use soft-delete instead of hard-delete for update/delete operations.
      * Soft-deletes is enabled by default for Legacy 7.x and 1.x indices and mandatory for 2.0+ indices.
@@ -823,6 +830,7 @@ public final class IndexSettings {
     private long gcDeletesInMillis = DEFAULT_GC_DELETES.millis();
     private final boolean softDeleteEnabled;
     private volatile long softDeleteRetentionOperations;
+    private final boolean metricsEnabled;
 
     private volatile long retentionLeaseMillis;
 
@@ -1028,6 +1036,7 @@ public final class IndexSettings {
         gcDeletesInMillis = scopedSettings.get(INDEX_GC_DELETES_SETTING).getMillis();
         softDeleteEnabled = scopedSettings.get(INDEX_SOFT_DELETES_SETTING);
         assert softDeleteEnabled || version.before(Version.V_2_0_0) : "soft deletes must be enabled in version " + version;
+        metricsEnabled = scopedSettings.get(INDEX_METRICS_SETTING);
         softDeleteRetentionOperations = scopedSettings.get(INDEX_SOFT_DELETES_RETENTION_OPERATIONS_SETTING);
         retentionLeaseMillis = scopedSettings.get(INDEX_SOFT_DELETES_RETENTION_LEASE_PERIOD_SETTING).millis();
         warmerEnabled = scopedSettings.get(INDEX_WARMER_ENABLED_SETTING);
@@ -1895,6 +1904,13 @@ public final class IndexSettings {
      */
     public boolean isSoftDeleteEnabled() {
         return softDeleteEnabled;
+    }
+
+    /**
+     * Returns <code>true</code> if metrics is enabled.
+     */
+    public boolean isMetricsEnabled() {
+        return metricsEnabled;
     }
 
     private void setSoftDeleteRetentionOperations(long ops) {

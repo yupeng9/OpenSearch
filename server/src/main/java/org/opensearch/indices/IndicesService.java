@@ -171,6 +171,7 @@ import org.opensearch.search.query.QueryPhase;
 import org.opensearch.search.query.QuerySearchResult;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.client.Client;
+import org.opensearch.ts.MetricsEngineFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -1120,6 +1121,11 @@ public class IndicesService extends AbstractLifecycleComponent
         if (indexMetadata != null && indexMetadata.getState() == IndexMetadata.State.CLOSE) {
             // NoOpEngine takes precedence as long as the index is closed
             return NoOpEngine::new;
+        }
+
+        // metrics engine
+        if(idxSettings.isMetricsEnabled()) {
+            return new MetricsEngineFactory();
         }
 
         // streaming ingestion
