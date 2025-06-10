@@ -11,6 +11,7 @@ package org.opensearch.ts.head;
 import org.opensearch.ts.chunks.Chunk;
 import org.opensearch.ts.chunks.Encoding;
 import org.opensearch.ts.chunks.ImmutableRawChunk;
+import org.opensearch.ts.chunks.XORChunk;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -136,7 +137,7 @@ public class ChunkDiskMapper {
         // skip crc check here, it shall be validated when the file is loaded
         return switch (encoding) {
             case RAW -> new ImmutableRawChunk(chunkBytes);
-            case XOR -> throw new UnsupportedOperationException("Not implemented yet");
+            case XOR -> new XORChunk(chunkBytes);
         };
     }
 

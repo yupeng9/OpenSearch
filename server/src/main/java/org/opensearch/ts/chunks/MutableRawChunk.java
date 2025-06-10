@@ -43,6 +43,11 @@ public class MutableRawChunk implements RawChunk {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 
+    @Override
+    public ChunkIterator iterator(ChunkIterator iterator) {
+        throw new UnsupportedOperationException("Raw chunk iterator not implemented yet");
+    }
+
     public class RawChunkAppender implements ChunkAppender {
         @Override
         public void append(long timestamp, double value) {

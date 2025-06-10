@@ -37,4 +37,9 @@ public class ImmutableRawChunk implements RawChunk {
     public void compact() {
         throw new UnsupportedOperationException("Not implemented yet");
     }
+
+    @Override
+    public ChunkIterator iterator(ChunkIterator iterator) {
+        throw new UnsupportedOperationException("Raw chunk iterator not implemented yet");
+    }
 }

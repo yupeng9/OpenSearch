@@ -27,4 +27,11 @@ public interface Chunk {
 
     void compact();
 
+    /**
+     * Returns an iterator for reading data from this chunk
+     * @param iterator reusable iterator instance, can be null
+     * @return iterator for reading chunk data
+     */
+    ChunkIterator iterator(ChunkIterator iterator);
+
 }
