@@ -33,7 +33,7 @@ public class HeadChunkReader implements ChunkReader {
             return null;
         }
 
-        return head.chunkFromSeries(series, chunkId, minTime, maxTime);
+        return null; // TODO remove this, since not reading based on Meta
     }
 
     @Override

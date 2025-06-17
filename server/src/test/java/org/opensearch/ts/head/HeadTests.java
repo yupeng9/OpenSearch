@@ -21,50 +21,6 @@ import java.util.Map;
 
 public class HeadTests extends OpenSearchTestCase {
 
-    public void testHeadAppendAndMMap() throws IOException {
-        Head head = new Head(createTempDir("testHeadLifecycle"));
-        HeadAppender.CommitContext context = new HeadAppender.CommitContext(new ChunkOptions(1000, 10));
-        Labels seriesLabels = Labels.fromStrings("k1", "v1", "k2", "v2");
-
-        List<Long> expectedTimestamps = new ArrayList<>();
-        List<Double> expectedValues = new ArrayList<>();
-
-        // three batches create three chunks, with [8, 8, 2] samples respectively
-        int sample = 0;
-        for (int batch = 0; batch < 3; batch++) {
-            HeadAppender appender = head.newAppender();
-            for (int i = 0; i < 6; i++) {
-                expectedTimestamps.add((long) sample);
-                expectedValues.add((double) i);
-                appender.append(0, seriesLabels, sample++, i);
-
-            }
-            appender.commitSamples(context);
-        }
-
-        head.mmapHeadChunks();
-
-        MemSeries series = head.getStripeSeries().getByHash(seriesLabels.hashCode(), seriesLabels);
-        Chunk firstChunk = head.chunkFromSeries(series, 0, 0, 7); // mmapped
-        Chunk secondChunk = head.chunkFromSeries(series, 1, 8, 15); // mmapped
-        Chunk thirdChunk = head.chunkFromSeries(series, 2, 16, 17); // in memory
-
-        assertEquals(firstChunk.numSamples(), 8);
-        assertEquals(secondChunk.numSamples(), 8);
-        assertEquals(thirdChunk.numSamples(), 2);
-
-        List<Long> actualTimestamps = new ArrayList<>();
-        List<Double> actualValues = new ArrayList<>();
-        append(firstChunk, actualTimestamps, actualValues);
-        append(secondChunk, actualTimestamps, actualValues);
-        append(thirdChunk, actualTimestamps, actualValues);
-
-        assertEquals(expectedTimestamps, actualTimestamps);
-        assertEquals(expectedValues, actualValues);
-
-        head.close();
-    }
-
     public void testHeadLifecycle() throws IOException, InterruptedException {
         Head head = new Head(createTempDir("testHeadLifecycle"));
         HeadAppender.CommitContext context = new HeadAppender.CommitContext(new ChunkOptions(1000, 10));

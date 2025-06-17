@@ -31,7 +31,6 @@ import java.util.concurrent.ScheduledExecutorService;
 public class MetricsEngine extends InternalEngine {
 
     private static final long MMAP_FREQUENCY = 60 * 1000;
-    private static final long GC_FREQUENCY = 5 * 60 * 1000;
 
     private Head head;
 
@@ -68,9 +67,6 @@ public class MetricsEngine extends InternalEngine {
     private void startBackgroundJobs() {
         // periodically mmap head chunks
         executor.scheduleAtFixedRate(head::closeHeadChunks, MMAP_FREQUENCY, MMAP_FREQUENCY, java.util.concurrent.TimeUnit.MILLISECONDS);
-
-        // periodically remove stale series and old chunks
-        executor.scheduleAtFixedRate(head::truncate, GC_FREQUENCY, GC_FREQUENCY, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     public void close() throws IOException {

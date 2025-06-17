@@ -8,14 +8,11 @@
 
 package org.opensearch.ts.head;
 
-import org.apache.lucene.store.ByteArrayDataInput;
-import org.apache.lucene.store.ByteArrayDataOutput;
 import org.opensearch.ts.chunks.ChunkAppender;
 import org.opensearch.ts.chunks.Encoding;
 import org.opensearch.ts.chunks.MutableRawChunk;
 import org.opensearch.ts.model.Labels;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
@@ -34,9 +31,6 @@ public class MemSeries {
 
     // labels of the series (TODO do we need to keep this in memory?)
     private final Labels labels;
-
-    // list of mmapped chunks, that are still part of the head block.
-    private final List<MMappedChunk> mmappedChunks = new ArrayList<>();
 
     // Atomically update headChunk list and mmappedChunks when mmapping or truncating
     private final ReentrantReadWriteLock chunkListsLock = new ReentrantReadWriteLock();
@@ -76,10 +70,6 @@ public class MemSeries {
 
     public long getReference() {
         return reference;
-    }
-
-    public List<MMappedChunk> getMMappedChunks() {
-        return mmappedChunks;
     }
 
     public void commit() {
@@ -166,32 +156,6 @@ public class MemSeries {
         return (t / chunkRange) * chunkRange + chunkRange;
     }
 
-    /**
-     * returns the chunk for the given id from memory. if the chunk is on disk, then it needs to mmap it.
-     */
-    public HeadChunk getChunk(long chunkId) {
-        chunkListsLock.readLock().lock();
-        try {
-            int chunkIndex = Math.toIntExact(chunkId - firstChunkId);
-            int headChunksLen = headChunk == null ? 0 : headChunk.len();
-
-            if (chunkIndex < 0 || chunkIndex > mmappedChunks.size() + headChunksLen - 1) {
-                throw new IndexOutOfBoundsException("Chunk ID " + chunkId + " is out of bounds. Valid range: [" + firstChunkId + ", " + (
-                    firstChunkId + mmappedChunks.size() + headChunksLen - 1) + "]");
-            }
-
-            if (chunkIndex < mmappedChunks.size()) {
-                return mmappedChunks.get(chunkIndex);
-            }
-
-            int headChunksIndex = chunkIndex - mmappedChunks.size();
-            int headChunksOffset = headChunksLen - 1 - headChunksIndex; // offset is from head to tail, reverse the index
-            return headChunk.atOffset(headChunksOffset);
-        } finally {
-            chunkListsLock.readLock().unlock();
-        }
-    }
-
     public MemChunk getHeadChunk() {
         return headChunk;
     }
@@ -213,94 +177,6 @@ public class MemSeries {
         }
 
         return closableChunks;
-    }
-
-    /**
-     * MMap all but the head chunk, and possibly the head chunk if the series is inactive. Returns the number of chunks mapped
-     */
-    public int mmapChunks(ChunkDiskMapper chunkDiskMapper) {
-        if (headChunk == null || headChunk.getPrev() == null) {
-            return 0; // nothing to map
-        }
-
-        List<MMappedChunk> newMMappedChunks = new ArrayList<>();
-        long newMMapMaxTimestamp = mmapMaxTimestamp;
-
-        int count = 0;
-        // mmap chunks from oldest to newest, skipping the current headChunk
-        for (int i = headChunk.len() - 1; i > 0; i--) {
-            MemChunk chunk = headChunk.atOffset(i);
-            ChunkDiskMapper.ChunkRef chunkRef = chunkDiskMapper.writeChunk(reference, chunk);
-
-            MMappedChunk mmappedChunk = new MMappedChunk(chunkRef, chunk.getMinTimestamp(), chunk.getMaxTimestamp());
-            newMMappedChunks.add(mmappedChunk);
-            if (chunk.getMaxTimestamp() > newMMapMaxTimestamp) {
-                newMMapMaxTimestamp = chunk.getMaxTimestamp();
-            }
-            count++;
-        }
-
-        // TODO: if t is significantly larger than headChunk.nextAt, we may seal the head chunk and mmap it too (e.g. series churn)
-
-        //
-        chunkListsLock.writeLock().lock();
-        try {
-            // replace the old mmapped chunks with the new ones
-            mmappedChunks.addAll(newMMappedChunks);
-            mmapMaxTimestamp = newMMapMaxTimestamp;
-
-            // drop memchunks that are now mmapped
-            headChunk.truncatePrev();
-        } finally {
-            chunkListsLock.writeLock().unlock();
-        }
-
-        return count;
-    }
-
-    /**
-     * Truncate mmapped chunks that contain data strictly before minTimestamp, and returns the smallest file index of the remaining mmapped chunks
-     */
-    public int truncateBefore(long minTimestamp) {
-        int minFileIndex = 0;
-        chunkListsLock.writeLock().lock();
-        try {
-            int i = 0;
-            // mmappedChunks are not necessarily ordered (may include ooo chunks, so check all)
-            while (i < mmappedChunks.size()) {
-                MMappedChunk chunk = mmappedChunks.get(i);
-                if (chunk.getMaxTimestamp() >= minTimestamp) {
-                    minFileIndex = Math.min(minFileIndex, chunk.getFileIndex());
-                    i++;
-                    continue;
-                }
-                mmappedChunks.remove(i);
-            }
-        } finally {
-            chunkListsLock.writeLock().unlock();
-        }
-        return minFileIndex;
-    }
-
-    /**
-     * Encode the series as a byte[]. Takes a byte[] as input which the serialized data is written to. Returns the number of bytes written.
-     */
-    public int encodeForSnapshot(byte[] buffer) throws IOException {
-        int pos = labels.bytes(buffer);
-        ByteArrayDataOutput out = new ByteArrayDataOutput(buffer, pos, Long.BYTES);
-        out.writeLong(reference);
-        return out.getPosition();
-    }
-
-    /**
-     * Create a MemSeries from the given byte arrays representing labels and metadata.
-     */
-    public static MemSeries decodeFromSnapshot(byte[] labelsBytes, byte[] metaBytes) {
-        assert metaBytes.length == SERIALIZED_META_SIZE : "Meta bytes must be of size " + SERIALIZED_META_SIZE;
-        Labels labels = Labels.fromSerializedBytes(labelsBytes);
-        ByteArrayDataInput meta = new ByteArrayDataInput(metaBytes);
-        long reference = meta.readLong();
-        return new MemSeries(reference, labels, false);
     }
 
     public void lockHeadChunk() {
