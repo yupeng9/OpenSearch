@@ -17,6 +17,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class HeadTests extends OpenSearchTestCase {
 
@@ -64,10 +65,8 @@ public class HeadTests extends OpenSearchTestCase {
         head.close();
     }
 
-    public void testLoadSnapshot() throws IOException {
-        Path testDir = createTempDir("testLoadSnapshot");
-        Head head = new Head(testDir);
-        head.initTime(0);
+    public void testHeadLifecycle() throws IOException, InterruptedException {
+        Head head = new Head(createTempDir("testHeadLifecycle"));
         HeadAppender.CommitContext context = new HeadAppender.CommitContext(new ChunkOptions(1000, 10));
         Labels seriesLabels = Labels.fromStrings("k1", "v1", "k2", "v2");
 
@@ -75,30 +74,51 @@ public class HeadTests extends OpenSearchTestCase {
         List<Double> expectedValues = new ArrayList<>();
 
         // three batches create three chunks, with [8, 8, 2] samples respectively
-        HeadAppender appender = head.newAppender();
-        for (int i = 0; i < 16; i++) {
-            expectedTimestamps.add((long) i);
-            expectedValues.add((double) i);
-            appender.append(0, seriesLabels, i, i);
-        }
-        appender.commitSamples(context);
+        int sample = 0;
+        for (int batch = 0; batch < 3; batch++) {
+            HeadAppender appender = head.newAppender();
+            for (int i = 0; i < 6; i++) {
+                expectedTimestamps.add((long) sample);
+                expectedValues.add((double) i);
+                appender.append(0, seriesLabels, sample++, i);
 
-        head.mmapHeadChunks();
-        head.close();
-        head = new Head(testDir);
+            }
+            appender.commitSamples(context);
+        }
+
+        Thread.sleep(2000L); // allow the live index to refresh
+
+        head.closeHeadChunks();
 
         MemSeries series = head.getStripeSeries().getByHash(seriesLabels.hashCode(), seriesLabels);
-        Chunk firstChunk = head.chunkFromSeries(series, 0, 0, 7); // mmapped
+
+        Map<Integer, List<HeadChunk>> chunks = head.matchingChunks("/k1:v1/", 0, 20);
+        assertEquals(1, chunks.size());
+        List<HeadChunk> seriesChunks = chunks.get(series.getLabels().hashCode());
+        assertEquals(3, seriesChunks.size());
+
+        assertTrue(seriesChunks.get(0) instanceof ClosedChunk); // mmapped
+        assertTrue(seriesChunks.get(1) instanceof ClosedChunk); // mmapped
+        assertTrue(seriesChunks.get(2) instanceof MemChunk);    // heap
+
+        Chunk firstChunk = seriesChunks.get(0).getChunk();
+        Chunk secondChunk = seriesChunks.get(1).getChunk();
+        Chunk thirdChunk = seriesChunks.get(2).getChunk();
 
         assertEquals(firstChunk.numSamples(), 8);
+        assertEquals(secondChunk.numSamples(), 8);
+        assertEquals(thirdChunk.numSamples(), 2);
 
         List<Long> actualTimestamps = new ArrayList<>();
         List<Double> actualValues = new ArrayList<>();
         append(firstChunk, actualTimestamps, actualValues);
+        append(secondChunk, actualTimestamps, actualValues);
+        append(thirdChunk, actualTimestamps, actualValues);
 
-        // TODO: only mmapped chunks are currently persisted in snapshot
-        assertEquals(expectedTimestamps.subList(0, 8), actualTimestamps);
-        assertEquals(expectedValues.subList(0, 8), actualValues);
+        assertEquals(expectedTimestamps, actualTimestamps);
+        assertEquals(expectedValues, actualValues);
+
+        head.close();
     }
 
     // helper appends timestamps and values from a chunk to the provided lists

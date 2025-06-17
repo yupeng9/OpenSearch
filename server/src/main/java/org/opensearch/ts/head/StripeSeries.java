@@ -11,6 +11,7 @@ package org.opensearch.ts.head;
 import org.opensearch.ts.model.Labels;
 
 import java.util.*;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * A collection of series. The series can be looked up by either hash or ID.
@@ -19,6 +20,7 @@ public class StripeSeries {
     // TODO: why does prometheus do an additional sharding?
     private final Map<Long, MemSeries> series;
     private final SeriesHashmap seriesHashmap;
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     public StripeSeries() {
         series = new HashMap<>();
@@ -33,8 +35,16 @@ public class StripeSeries {
         return seriesHashmap.get(hash, labels);
     }
 
-    public Collection<MemSeries> getSeries() {
-        return series.values();
+    /**
+     * Returns a list containing a snapshot of the current series.
+     */
+    public List<MemSeries> getSeries() {
+        lock.readLock().lock();
+        try {
+            return new ArrayList<>(series.values());
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     /**
@@ -51,8 +61,13 @@ public class StripeSeries {
     }
 
     public void set(long hash, MemSeries s) {
-        series.put(s.getReference(), s);
-        seriesHashmap.set(hash, s);
+        lock.writeLock().lock();
+        try {
+            series.put(s.getReference(), s);
+            seriesHashmap.set(hash, s); // separate locks?
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     public static class SeriesHashmap {

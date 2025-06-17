@@ -10,9 +10,7 @@ package org.opensearch.ts.model;
 
 import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ByteArrayDataOutput;
-import org.apache.lucene.store.DataOutput;
 
-import java.io.DataInput;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Objects;
@@ -41,6 +39,20 @@ public class Labels {
             labelMap.put(labels[i], labels[i + 1]);
         }
         return new Labels(labelMap);
+    }
+
+    public String toKeyValueString() {
+        StringBuilder sb = new StringBuilder();
+        int i = 0;
+        for (Map.Entry<String, String> entry : labels.entrySet()) {
+            sb.append(entry.getKey());
+            sb.append(':');
+            sb.append(entry.getValue());
+            sb.append(' ');
+        }
+        // Remove the trailing space, assumes there is at least one label with len > 0
+        sb.setLength(sb.length() - 1);
+        return sb.toString();
     }
 
     public static Labels fromSerializedBytes(byte[] bytes) {
@@ -92,5 +104,4 @@ public class Labels {
         // TODO: implement a similar stable hash as prometheus
         return Objects.hash(labels);
     }
-
 }

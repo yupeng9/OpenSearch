@@ -18,6 +18,7 @@ import org.opensearch.ts.model.Labels;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
@@ -45,6 +46,7 @@ public class MemSeries {
 
     // A linked list of chunks in memory being built or to be mmapped. This points to the most recent chunk.
     private MemChunk headChunk;
+    private final ReentrantLock headChunkWriteLock = new ReentrantLock();
 
     // Max timestamp of the head chunk, used for checking ooo/duplicates
     private long maxTimestamp;
@@ -130,7 +132,13 @@ public class MemSeries {
 
     private MemChunk createHeadChunk(long minTime, Encoding encoding, long chunkRange) {
         MemChunk chunk = new MemChunk(minTime, Long.MIN_VALUE, headChunk);
-        this.headChunk = chunk;
+
+        headChunkWriteLock.lock();
+        try {
+            this.headChunk = chunk;
+        } finally {
+            headChunkWriteLock.unlock();
+        }
         // TODO: support other encoding
         assert encoding == Encoding.RAW;
         chunk.setChunk(new MutableRawChunk());
@@ -182,6 +190,29 @@ public class MemSeries {
         } finally {
             chunkListsLock.readLock().unlock();
         }
+    }
+
+    public MemChunk getHeadChunk() {
+        return headChunk;
+    }
+
+    public void setHeadChunk(MemChunk chunk) {
+        this.headChunk = chunk;
+    }
+
+    public List<MemChunk> getClosableChunks() {
+        List<MemChunk> closableChunks = new ArrayList<>();
+        MemChunk headChunk = this.headChunk;
+        if (headChunk == null || headChunk.getPrev() == null) {
+            return closableChunks; // nothing to map
+        }
+
+        for (int i = headChunk.len() - 1; i > 0; i--) {
+            closableChunks.add(headChunk.atOffset(i));
+            // todo: if curr time is significantly larger than headChunk.nextAt, we may seal the head chunk and mmap it too (e.g. series churn)
+        }
+
+        return closableChunks;
     }
 
     /**
@@ -270,5 +301,13 @@ public class MemSeries {
         ByteArrayDataInput meta = new ByteArrayDataInput(metaBytes);
         long reference = meta.readLong();
         return new MemSeries(reference, labels, false);
+    }
+
+    public void lockHeadChunk() {
+        headChunkWriteLock.lock();
+    }
+
+    public void unlockHeadChunk() {
+        headChunkWriteLock.unlock();
     }
 }

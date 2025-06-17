@@ -8,13 +8,21 @@
 
 package org.opensearch.ts.head;
 
+import org.apache.lucene.store.ByteArrayDataOutput;
 import org.opensearch.ts.chunks.Chunk;
+
+import java.io.IOException;
 
 /**
  * HeadChunk represents a chunk in the head block. It may be in-memory or mmapped
  */
 public interface HeadChunk {
+
+    Chunk getChunk();
+
     long getMinTimestamp();
 
     long getMaxTimestamp();
+
+    byte[] getChunkUuid();
 }

@@ -8,22 +8,33 @@
 
 package org.opensearch.ts.head;
 
+import org.opensearch.common.UUIDs;
 import org.opensearch.ts.chunks.Chunk;
+
+import java.util.Base64;
 
 /*
  * MemChunk represents a chunk in the head block. Chunk may be in memory, or mmapped.
  */
 public class MemChunk implements HeadChunk {
+    public static final int UUID_BYTES_LENGTH = 15; // length of the uuid once decoded
+    private final byte[] chunkUuid; // used for query-time dedup
     private Chunk chunk;
     private long minTimestamp;
     private long maxTimestamp;
     // link to the previous chunk on the linked list
     private MemChunk prev;
+    // link to the next chunk on the linked list
+    private MemChunk next;
 
     public MemChunk(long minTimestamp, long maxTimestamp, MemChunk prev) {
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
+        this.chunkUuid = Base64.getUrlDecoder().decode(UUIDs.base64UUID()); // todo: shorter uid here, we should only need a few bytes
         this.prev = prev;
+        if (prev != null) {
+            prev.next = this;
+        }
     }
 
     // Returns the length of the memChunk list, including this element
@@ -85,6 +96,22 @@ public class MemChunk implements HeadChunk {
 
     public MemChunk getPrev() {
         return prev;
+    }
+
+    public MemChunk getNext() {
+        return next;
+    }
+
+    public void setNext(MemChunk chunk) {
+        this.next = chunk;
+    }
+
+    public void setPrev(MemChunk chunk) {
+        this.prev = chunk;
+    }
+
+    public byte[] getChunkUuid() {
+        return chunkUuid;
     }
 
     public void truncatePrev() {

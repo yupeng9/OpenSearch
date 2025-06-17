@@ -32,11 +32,22 @@ public class MMappedChunk implements HeadChunk {
         return maxTimestamp;
     }
 
+    @Override
+    public byte[] getChunkUuid() {
+        throw new UnsupportedOperationException("class will be removed");
+    }
+
     public int getFileIndex() {
         return chunkRef.fileIndex();
     }
 
     public Chunk getChunk(ChunkDiskMapper chunkDiskMapper) {
         return chunkDiskMapper.chunkFor(chunkRef);
+    }
+
+    @Override
+    public Chunk getChunk() {
+        // MMappedChunk will be removed in a future cleanup commit
+        throw new UnsupportedOperationException("Use getChunk(ChunkDiskMapper) instead to retrieve the chunk from disk.");
     }
 }

@@ -48,7 +48,7 @@ public class HeadAppender implements Appender {
         // TODO: ooo support
         MemSeries series = head.getStripeSeries().getById(seriesRef);
         if (series == null) {
-            series = createSeries(labels);
+            series = createSeries(labels, timestamp);
         }
         if (timestamp < minTime) {
             minTime = timestamp;
@@ -61,13 +61,13 @@ public class HeadAppender implements Appender {
         return series.getReference();
     }
 
-    public MemSeries createSeries(Labels labels) {
+    public MemSeries createSeries(Labels labels, long timestamp) {
         if (labels.isEmpty()) {
             throw new IllegalArgumentException("Labels cannot be empty");
         }
 
         // TODO: use better hashcode
-        MemSeries series = head.createSeries(labels.hashCode(), labels, true);
+        MemSeries series = head.createSeries(labels.hashCode(), labels, true, timestamp);
         seriesRefs.add(series.getReference());
         seriesList.add(series);
         return series;

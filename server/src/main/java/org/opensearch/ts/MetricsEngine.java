@@ -67,7 +67,7 @@ public class MetricsEngine extends InternalEngine {
 
     private void startBackgroundJobs() {
         // periodically mmap head chunks
-        executor.scheduleAtFixedRate(head::mmapHeadChunks, MMAP_FREQUENCY, MMAP_FREQUENCY, java.util.concurrent.TimeUnit.MILLISECONDS);
+        executor.scheduleAtFixedRate(head::closeHeadChunks, MMAP_FREQUENCY, MMAP_FREQUENCY, java.util.concurrent.TimeUnit.MILLISECONDS);
 
         // periodically remove stale series and old chunks
         executor.scheduleAtFixedRate(head::truncate, GC_FREQUENCY, GC_FREQUENCY, java.util.concurrent.TimeUnit.MILLISECONDS);
