@@ -8,24 +8,24 @@
 
 package org.opensearch.ts.chunks;
 
-public class XORChunk extends CompressionChunk {
+public class ChimpChunk extends CompressionChunk {
 
-    public XORChunk() {
+    public ChimpChunk() {
         super();
     }
 
-    public XORChunk(byte[] bytes) {
+    public ChimpChunk(byte[] bytes) {
         super(bytes);
     }
 
     @Override
     public Encoding encoding() {
-        return Encoding.XOR;
+        return Encoding.CHIMP;
     }
 
     @Override
     public ChunkAppender appender() {
-        XORIterator it = new XORIterator(bytes());
+        ChimpIterator it = new ChimpIterator(bytes());
 
         // To get an appender we must know the state it would have if we had
         // appended all existing data from scratch.
@@ -36,27 +36,28 @@ public class XORChunk extends CompressionChunk {
             throw new RuntimeException("Error reading existing chunk data", it.error());
         }
 
-        XORAppender a = new XORAppender(
+        ChimpAppender a = new ChimpAppender(
             this,
             it.currentTimestamp,
             it.currentValue,
             it.timeDelta,
-            it.leading,
-            it.trailing
+            it.storedValues,
+            it.currentIndex,
+            it.storedValuesCount,
+            it.indices,
+            it.index,
+            it.storedLeadingZeros
         );
-        if (it.totalSamples == 0) {
-            a.setLeading((byte) 0xff);
-        }
         return a;
     }
 
     @Override
     public ChunkIterator iterator(ChunkIterator iterator) {
-        if (iterator instanceof XORIterator) {
-            XORIterator xorIterator = (XORIterator) iterator;
-            xorIterator.reset(bytes());
-            return xorIterator;
+        if (iterator instanceof ChimpIterator) {
+            ChimpIterator chimpIterator = (ChimpIterator) iterator;
+            chimpIterator.reset(bytes());
+            return chimpIterator;
         }
-        return new XORIterator(bytes());
+        return new ChimpIterator(bytes());
     }
-}
+} 

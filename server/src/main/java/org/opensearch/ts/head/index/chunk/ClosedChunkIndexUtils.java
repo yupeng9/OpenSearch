@@ -57,6 +57,7 @@ public class ClosedChunkIndexUtils {
         Chunk chunk = switch (encoding) {
             case RAW -> new ImmutableRawChunk(chunkBytes);
             case XOR -> throw new UnsupportedOperationException("XOR encoding not yet supported");
+            case CHIMP -> throw new UnsupportedOperationException("CHIMP encoding not yet supported");
         };
         return new ClosedChunk(minTimestamp, maxTimestamp, chunkBytes, chunk.encoding(), uuid);
     }

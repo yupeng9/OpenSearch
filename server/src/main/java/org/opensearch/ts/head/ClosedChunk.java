@@ -25,6 +25,7 @@ public class ClosedChunk implements HeadChunk {
         this.chunk = switch (encoding) {
             case RAW -> new ImmutableRawChunk(bytes);
             case XOR -> throw new UnsupportedOperationException("XOR encoding not yet supported");
+            case CHIMP -> throw new UnsupportedOperationException("CHIMP encoding not yet supported");
         };
         this.uuid = uuid;
     }

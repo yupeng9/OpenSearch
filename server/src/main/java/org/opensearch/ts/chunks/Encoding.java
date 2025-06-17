@@ -13,7 +13,8 @@ package org.opensearch.ts.chunks;
  */
 public enum Encoding {
     RAW,
-    XOR;
+    XOR,
+    CHIMP;
 
     // order cannot be changed
     public static final Encoding[] VALUES = values();

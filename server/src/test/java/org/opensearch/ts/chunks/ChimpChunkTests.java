@@ -10,12 +10,102 @@ package org.opensearch.ts.chunks;
 
 import org.opensearch.test.OpenSearchTestCase;
 
-public class XORChunkTests extends OpenSearchTestCase {
+public class ChimpChunkTests extends OpenSearchTestCase {
 
-    public void testXorRead() throws Exception {
-        XORChunk chunk = new XORChunk();
+    public void testChimpCompressionAndDecompression() {
+        ChimpChunk chunk = new ChimpChunk();
         ChunkAppender appender = chunk.appender();
         
+        // Add some sample data
+        long baseTime = 1000000000L; // Base timestamp
+        double[] values = {1.0, 1.1, 1.2, 1.15, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5};
+        
+        for (int i = 0; i < values.length; i++) {
+            appender.append(baseTime + i * 1000, values[i]);
+        }
+        
+        // Verify we can read the data back correctly
+        ChunkIterator iterator = chunk.iterator(null);
+        int count = 0;
+        
+        while (iterator.next() != ChunkIterator.ValueType.NONE) {
+            ChunkIterator.TimestampValue tv = iterator.at();
+            assertEquals("Timestamp mismatch at index " + count, baseTime + count * 1000, tv.timestamp());
+            assertEquals("Value mismatch at index " + count, values[count], tv.value(), 0.000001);
+            count++;
+        }
+        
+        assertEquals("Expected " + values.length + " samples but got " + count, values.length, count);
+        assertEquals("Chunk sample count mismatch", values.length, chunk.numSamples());
+        assertEquals("Encoding should be CHIMP", Encoding.CHIMP, chunk.encoding());
+        
+        // Verify no errors occurred
+        assertNull("Iterator should not have errors", iterator.error());
+    }
+    
+    public void testChimpWithRepeatedValues() {
+        ChimpChunk chunk = new ChimpChunk();
+        ChunkAppender appender = chunk.appender();
+        
+        // Add data with repeated values to test compression efficiency
+        long baseTime = 2000000000L;
+        double[] values = {5.0, 5.0, 5.1, 5.1, 5.1, 5.2, 5.2, 5.0, 5.0, 5.3};
+        
+        for (int i = 0; i < values.length; i++) {
+            appender.append(baseTime + i * 2000, values[i]);
+        }
+        
+        // Verify decompression
+        ChunkIterator iterator = chunk.iterator(null);
+        int count = 0;
+        
+        while (iterator.next() != ChunkIterator.ValueType.NONE) {
+            ChunkIterator.TimestampValue tv = iterator.at();
+            assertEquals("Timestamp mismatch at index " + count, baseTime + count * 2000, tv.timestamp());
+            assertEquals("Value mismatch at index " + count, values[count], tv.value(), 0.000001);
+            count++;
+        }
+        
+        assertEquals("Expected " + values.length + " samples but got " + count, values.length, count);
+        assertNull("Iterator should not have errors", iterator.error());
+    }
+    
+    public void testChimpEmptyChunk() {
+        ChimpChunk chunk = new ChimpChunk();
+        
+        assertEquals("Empty chunk should have 0 samples", 0, chunk.numSamples());
+        assertEquals("Encoding should be CHIMP", Encoding.CHIMP, chunk.encoding());
+        
+        ChunkIterator iterator = chunk.iterator(null);
+        assertEquals("Empty chunk iterator should return NONE", 
+                    ChunkIterator.ValueType.NONE, iterator.next());
+        assertNull("Iterator should not have errors", iterator.error());
+    }
+    
+    public void testChimpSingleValue() {
+        ChimpChunk chunk = new ChimpChunk();
+        ChunkAppender appender = chunk.appender();
+        
+        appender.append(1000L, 42.0);
+        
+        assertEquals("Single value chunk should have 1 sample", 1, chunk.numSamples());
+        
+        ChunkIterator iterator = chunk.iterator(null);
+        assertEquals("Should have one value", ChunkIterator.ValueType.FLOAT, iterator.next());
+        
+        ChunkIterator.TimestampValue tv = iterator.at();
+        assertEquals("Timestamp should match", 1000L, tv.timestamp());
+        assertEquals("Value should match", 42.0, tv.value(), 0.000001);
+        
+        assertEquals("Should be end of data", ChunkIterator.ValueType.NONE, iterator.next());
+        assertNull("Iterator should not have errors", iterator.error());
+    }
+
+    public void testChimpRead() throws Exception {
+        ChimpChunk chunk = new ChimpChunk();
+        ChunkAppender appender = chunk.appender();
+        
+        // Test with large scale data similar to XOR test
         for (long i = 0; i < 120_000; i += 1000) {
             double value = i + (double)i/10 + (double)i/100 + (double)i/1000;
             appender.append(i, value);
@@ -35,11 +125,13 @@ public class XORChunkTests extends OpenSearchTestCase {
         }
         
         assertNull("Iterator should not have errors", iterator.error());
+        assertEquals("Expected 120 samples", 120, count);
+        assertEquals("Chunk sample count should match", 120, chunk.numSamples());
     }
 
-    public void testAppenderStateRestoration() throws Exception {
+    public void testChimpAppenderStateRestoration() throws Exception {
         // Test that appender() correctly restores state from existing chunk data
-        XORChunk chunk = new XORChunk();
+        ChimpChunk chunk = new ChimpChunk();
         ChunkAppender appender1 = chunk.appender();
         
         // Add initial samples
@@ -76,10 +168,11 @@ public class XORChunkTests extends OpenSearchTestCase {
         
         assertNull("Iterator should not have errors", iterator.error());
         assertEquals("Expected 5 samples", 5, count);
+        assertEquals("Chunk sample count should match", 5, chunk.numSamples());
     }
 
-    public void testXorLargeValues() {
-        XORChunk chunk = new XORChunk();
+    public void testChimpLargeValues() {
+        ChimpChunk chunk = new ChimpChunk();
         ChunkAppender appender = chunk.appender();
         
         // Test with large floating point values to stress the compression
@@ -123,8 +216,8 @@ public class XORChunkTests extends OpenSearchTestCase {
         assertNull("Iterator should not have errors", iterator.error());
     }
 
-    public void testXorTimestampJumps() {
-        XORChunk chunk = new XORChunk();
+    public void testChimpTimestampJumps() {
+        ChimpChunk chunk = new ChimpChunk();
         ChunkAppender appender = chunk.appender();
         
         // Test with irregular timestamp patterns to stress timestamp compression
@@ -158,95 +251,6 @@ public class XORChunkTests extends OpenSearchTestCase {
         }
         
         assertEquals("Expected " + timestamps.length + " samples but got " + count, timestamps.length, count);
-        assertNull("Iterator should not have errors", iterator.error());
-    }
-
-    public void testXorWithRepeatedValues() {
-        XORChunk chunk = new XORChunk();
-        ChunkAppender appender = chunk.appender();
-        
-        // Add data with repeated values to test compression efficiency
-        long baseTime = 2000000000L;
-        double[] values = {5.0, 5.0, 5.1, 5.1, 5.1, 5.2, 5.2, 5.0, 5.0, 5.3};
-        
-        for (int i = 0; i < values.length; i++) {
-            appender.append(baseTime + i * 2000, values[i]);
-        }
-        
-        // Verify decompression
-        ChunkIterator iterator = chunk.iterator(null);
-        int count = 0;
-        
-        while (iterator.next() != ChunkIterator.ValueType.NONE) {
-            ChunkIterator.TimestampValue tv = iterator.at();
-            assertEquals("Timestamp mismatch at index " + count, baseTime + count * 2000, tv.timestamp());
-            assertEquals("Value mismatch at index " + count, values[count], tv.value(), 0.000001);
-            count++;
-        }
-        
-        assertEquals("Expected " + values.length + " samples but got " + count, values.length, count);
-        assertNull("Iterator should not have errors", iterator.error());
-    }
-
-    public void testXorEmptyChunk() {
-        XORChunk chunk = new XORChunk();
-        
-        assertEquals("Empty chunk should have 0 samples", 0, chunk.numSamples());
-        assertEquals("Encoding should be XOR", Encoding.XOR, chunk.encoding());
-        
-        ChunkIterator iterator = chunk.iterator(null);
-        assertEquals("Empty chunk iterator should return NONE", 
-                    ChunkIterator.ValueType.NONE, iterator.next());
-        assertNull("Iterator should not have errors", iterator.error());
-    }
-
-    public void testXorSingleValue() {
-        XORChunk chunk = new XORChunk();
-        ChunkAppender appender = chunk.appender();
-        
-        appender.append(1000L, 42.0);
-        
-        assertEquals("Single value chunk should have 1 sample", 1, chunk.numSamples());
-        
-        ChunkIterator iterator = chunk.iterator(null);
-        assertEquals("Should have one value", ChunkIterator.ValueType.FLOAT, iterator.next());
-        
-        ChunkIterator.TimestampValue tv = iterator.at();
-        assertEquals("Timestamp should match", 1000L, tv.timestamp());
-        assertEquals("Value should match", 42.0, tv.value(), 0.000001);
-        
-        assertEquals("Should be end of data", ChunkIterator.ValueType.NONE, iterator.next());
-        assertNull("Iterator should not have errors", iterator.error());
-    }
-
-    public void testXorCompressionAndDecompression() {
-        XORChunk chunk = new XORChunk();
-        ChunkAppender appender = chunk.appender();
-        
-        // Add some sample data
-        long baseTime = 1000000000L; // Base timestamp
-        double[] values = {1.0, 1.1, 1.2, 1.15, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5};
-        
-        for (int i = 0; i < values.length; i++) {
-            appender.append(baseTime + i * 1000, values[i]);
-        }
-        
-        // Verify we can read the data back correctly
-        ChunkIterator iterator = chunk.iterator(null);
-        int count = 0;
-        
-        while (iterator.next() != ChunkIterator.ValueType.NONE) {
-            ChunkIterator.TimestampValue tv = iterator.at();
-            assertEquals("Timestamp mismatch at index " + count, baseTime + count * 1000, tv.timestamp());
-            assertEquals("Value mismatch at index " + count, values[count], tv.value(), 0.000001);
-            count++;
-        }
-        
-        assertEquals("Expected " + values.length + " samples but got " + count, values.length, count);
-        assertEquals("Chunk sample count mismatch", values.length, chunk.numSamples());
-        assertEquals("Encoding should be XOR", Encoding.XOR, chunk.encoding());
-        
-        // Verify no errors occurred
         assertNull("Iterator should not have errors", iterator.error());
     }
 } 
