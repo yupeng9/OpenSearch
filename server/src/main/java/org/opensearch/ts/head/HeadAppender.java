@@ -8,6 +8,8 @@
 
 package org.opensearch.ts.head;
 
+import org.apache.logging.log4j.Logger;
+import org.opensearch.common.logging.Loggers;
 import org.opensearch.ts.Appender;
 import org.opensearch.ts.model.Labels;
 import org.opensearch.ts.model.RefSample;
@@ -17,6 +19,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class HeadAppender implements Appender {
+    protected final Logger logger;
+
     // the actual appender
     private final Head head;
     private long minValidTimestamp;
@@ -32,6 +36,7 @@ public class HeadAppender implements Appender {
     private List<MemSeries> sampleSeries; // pointers to the series corresponding to the samples
 
     public HeadAppender(Head head, long minValidTimestamp, long minTime, long maxTime) {
+        this.logger = Loggers.getLogger(HeadAppender.class, head.getShardId());
         this.head = head;
         this.minValidTimestamp = minValidTimestamp;
         this.minTime = minTime;
@@ -99,7 +104,10 @@ public class HeadAppender implements Appender {
             boolean chunkCreated = s.append(refSample.getTimestamp(), refSample.getValue(), context.options);
             if (chunkCreated) {
                 // TODO: update metrics
+                logger.debug("Created new chunk for series: {}", s.getReference());
             }
+            logger.debug("Appending sample: timestamp={}, value={}, seriesRef={}",
+                    refSample.getTimestamp(), refSample.getValue(), refSample.getReference());
             s.commit();
         }
     }

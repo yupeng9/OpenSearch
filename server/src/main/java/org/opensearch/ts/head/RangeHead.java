@@ -29,4 +29,20 @@ public class RangeHead implements BlockReader {
     public ChunkReader chunks() {
         return head.chunksRange(minTime, maxTime);
     }
+
+    public long getMinTime() {
+        return minTime;
+    }
+
+    public long getMaxTime() {
+        return maxTime;
+    }
+
+    public String toString() {
+        return "RangeHead{" +
+            "head=" + head +
+            ", minTime=" + minTime +
+            ", maxTime=" + maxTime +
+            '}';
+    }
 }

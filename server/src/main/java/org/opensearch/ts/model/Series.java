@@ -8,6 +8,8 @@
 
 package org.opensearch.ts.model;
 
+import org.opensearch.ts.chunks.ChunkIterator;
+
 /**
  * Series exposes a single time series and allows iterating over the samples.
  *
@@ -16,5 +18,5 @@ package org.opensearch.ts.model;
 public interface Series {
     Labels getLabels();
 
-    Iterator iterator();
+    ChunkIterator iterator();
 }

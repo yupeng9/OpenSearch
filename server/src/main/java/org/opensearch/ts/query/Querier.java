@@ -8,7 +8,22 @@
 
 package org.opensearch.ts.query;
 
+import org.opensearch.ts.model.SeriesSet;
+
 /**
  * Querier provides querying access to the time series data over a fixed time range.
  */
-public interface Querier {}
+public interface Querier {
+    enum MatchType {
+        EQUALS,
+        NOT_EQUALS,
+        REGEX,
+        NOT_REGEX;
+    }
+
+    // TODO(phiiip): consider using OpenSearch QueryBuilder style interface instead.
+    record Matcher(MatchType type, String labelName, String query) {}
+
+    // prometheus style Querier interface
+    SeriesSet select(long mint, long maxt, Matcher ...matchers);
+}

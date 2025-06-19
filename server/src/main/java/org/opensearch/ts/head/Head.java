@@ -8,10 +8,15 @@
 
 package org.opensearch.ts.head;
 
+import org.opensearch.core.index.shard.ShardId;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.opensearch.ts.block.BlockReader;
 import org.opensearch.ts.head.index.chunk.ClosedChunkIndex;
 import org.opensearch.ts.head.index.live.LiveSeriesIndex;
+import org.opensearch.ts.block.BlockReader;
+import org.opensearch.ts.chunks.Chunk;
+import org.opensearch.ts.chunks.ChunkReader;
 import org.opensearch.ts.model.Labels;
 
 import java.io.IOException;
@@ -22,8 +27,10 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class Head {
+public class Head implements BlockReader {
     private static final Logger log = LogManager.getLogger(Head.class);
+
+    private final ShardId shardId;
     private final Path headDir;
     private final LiveSeriesIndex liveSeriesIndex;
     private final ClosedChunkIndex closedChunkIndex;
@@ -33,7 +40,8 @@ public class Head {
     private long minTime;
     private long maxTime;
 
-    public Head(Path dir) {
+    public Head(Path dir, ShardId shardId) {
+        this.shardId = shardId;
         minTime = Long.MAX_VALUE;
         maxTime = Long.MIN_VALUE;
         stripeSeries = new StripeSeries();
@@ -51,6 +59,11 @@ public class Head {
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize ClosedChunkIndex", e);
         }
+    }
+
+    // For testing purposes, create a head with a default shardId
+    public Head(Path dir) {
+        this(dir, new ShardId("dummy_metrics", "dummy_metrics_index_uuid", 0));
     }
 
     /**
@@ -91,6 +104,10 @@ public class Head {
         return createSeries(id, hash, labels, pendingCommit, timestamp);
     }
 
+    public ShardId getShardId() {
+        return shardId;
+    }
+
     private MemSeries createSeries(long id, long hash, Labels labels, boolean pendingCommit, long timestamp) {
         MemSeries newSeries = new MemSeries(id, labels, pendingCommit);
         stripeSeries.set(hash, newSeries);
@@ -113,6 +130,11 @@ public class Head {
             mint = this.minTime;
         }
         return new HeadChunkReader(this, mint, maxTime);
+    }
+
+    @Override
+    public ChunkReader chunks() {
+        return chunksRange(Long.MIN_VALUE, Long.MAX_VALUE);
     }
 
     // helper method for testing, replace when query side is further implemented

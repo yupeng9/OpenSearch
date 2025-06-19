@@ -10,8 +10,8 @@ package org.opensearch.ts.block;
 
 import org.opensearch.ts.chunks.ChunkReader;
 
+import java.io.IOException;
+
 public interface BlockReader {
-    ChunkReader chunks();
-
-
+    ChunkReader chunks() throws IOException;
 }

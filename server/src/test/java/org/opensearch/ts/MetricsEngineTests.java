@@ -8,6 +8,8 @@
 
 package org.opensearch.ts;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.lucene.index.NoMergePolicy;
 import org.apache.lucene.index.Term;
 import org.junit.After;
@@ -33,8 +35,11 @@ import org.opensearch.index.store.Store;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.replication.common.ReplicationType;
 import org.opensearch.test.IndexSettingsModule;
+import org.opensearch.ts.model.Labels;
+import java.util.Map;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.mockito.Mockito.mock;
@@ -80,44 +85,76 @@ public class MetricsEngineTests extends EngineTestCase {
         }
         """ ;
 
-    private static String SAMPLE_1 = """
-        {
-           "labels": [
-             {"name": "__name__", "value":"http_requests_total"},
-             {"name": "method", "value":"POST"},
-             {"name": "handler", "value":"/api/items"},
-             {"name": "status", "value":"200"}
-           ],
-           "samples":[
-             {
-               "timestamp": 1712576200.000,
-               "value":1024
-             }
-           ]
-         }
-        """;
+    static Labels series1 = Labels.fromStrings(
+        "__name__", "http_requests_total",
+        "method", "POST",
+        "handler", "/api/items",
+        "status", "200"
+    );
 
-    private static String SAMPLE_2 = """
-        {
-           "labels": [
-             {"name": "__name__", "value":"http_requests_total"},
-             {"name": "method", "value":"POST"},
-             {"name": "handler", "value":"/api/items"},
-             {"name": "status", "value":"200"}
-           ],
-           "samples":[
-             {
-               "timestamp": 1712576400.000,
-               "value":1026
-             }
-           ]
-         }
-        """;
+    static Labels series2 = Labels.fromStrings(
+        "__name__", "http_requests_total",
+        "method", "POST",
+        "handler", "/api/items",
+        "status", "429"
+    );
+
+
+    /**
+     * Sample JSON document representing a metric series.
+     * <pre>
+     *   {
+     *      "labels": [
+     *        {"name": "__name__", "value":"http_requests_total"},
+     *        {"name": "method", "value":"POST"},
+     *        {"name": "handler", "value":"/api/items"},
+     *        {"name": "status", "value":"200"}
+     *      ],
+     *      "samples":[
+     *        {
+     *          "timestamp": 1712576200.000,
+     *          "value":1024
+     *        }
+     *      ]
+     *    }
+     * </pre>
+     */
+
+
+    private static String createSampleJson(MetricsEngine.MetricDocument document) {
+        StringBuilder sb = new StringBuilder("{ \"labels\": [");
+
+        // iterate over labels map and append to JSON
+        List<Map.Entry<String, String>> labels = document.labels().toMapView().entrySet().stream().toList();
+
+        for (int i = 0; i < labels.size(); i++) {
+            var label = labels.get(i);
+            sb.append("{\"name\":\"").append(label.getKey()).append("\",\"value\":\"").append(label.getValue()).append("\"}");
+            if (i < labels.size() - 1) {
+                sb.append(",");
+            }
+        }
+        sb.append("], \"samples\": [");
+        List<MetricsEngine.MetricDocument.Sample> samples = document.samples();
+        for (int i = 0; i < samples.size(); i++) {
+            MetricsEngine.MetricDocument.Sample sample = samples.get(i);
+            sb.append("{\"timestamp\":").append(sample.timestamp()).append(",\"value\":").append(sample.value()).append("}");
+            if (i < samples.size() - 1) {
+                sb.append(",");
+            }
+        }
+
+        sb.append("]}");
+        return sb.toString();
+    }
 
 
     @Override
     @Before
     public void setUp() throws Exception {
+        // Enable debug logging for the metrics engine package
+        Configurator.setAllLevels("org.opensearch.ts", Level.DEBUG);
+
         indexSettings = newIndexSettings();
         super.setUp();
         final AtomicLong globalCheckpoint = new AtomicLong(SequenceNumbers.NO_OPS_PERFORMED);
@@ -189,10 +226,42 @@ public class MetricsEngineTests extends EngineTestCase {
     }
 
     public void testEngine() throws IOException {
-        engine.refresh("warm_up");
-        publishSample(1, SAMPLE_1);
-        publishSample(2, SAMPLE_2);
-        engine.refresh("index");
+        metricsEngine.refresh("warm_up");
+
+        List<String> samples = List.of(
+            // series 1
+            createSampleJson(
+                new MetricsEngine.MetricDocument(
+                    series1,
+                    List.of(
+                        new MetricsEngine.MetricDocument.Sample(1712576200L, 1024.0))
+                )
+            ),
+            createSampleJson(
+                new MetricsEngine.MetricDocument(
+                    series1,
+                    List.of(
+                        new MetricsEngine.MetricDocument.Sample(1712576400L, 1026.0))
+                )
+            ),
+
+            // series 2 (creates new chunk)
+            createSampleJson(
+                new MetricsEngine.MetricDocument(
+                    series2,
+                    List.of(
+                        new MetricsEngine.MetricDocument.Sample(1712576200L, 1024.0),
+                        new MetricsEngine.MetricDocument.Sample(1712576400L, 1026.0))
+                )
+            )
+        );
+
+        for (int i = 0; i < samples.size(); i++) {
+            publishSample(i, samples.get(i));
+        }
+
+        metricsEngine.refresh("index");
+        metricsEngine.maybeSafeCompactHead();
     }
 
 //    public void testEngineAppender() {

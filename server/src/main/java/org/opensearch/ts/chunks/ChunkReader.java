@@ -8,8 +8,10 @@
 
 package org.opensearch.ts.chunks;
 
+import java.io.IOException;
+
 public interface ChunkReader {
-    Chunk readChunk(Meta meta);
+    Chunk readChunk(Meta meta) throws IOException;
 
     void close();
 }

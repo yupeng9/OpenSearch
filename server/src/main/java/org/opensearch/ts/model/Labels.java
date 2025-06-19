@@ -12,6 +12,7 @@ import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ByteArrayDataOutput;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -22,7 +23,7 @@ import java.util.Objects;
 public class Labels {
     private final Map<String, String> labels;
 
-    Labels(Map<String, String> labels) {
+    public Labels(Map<String, String> labels) {
         this.labels = labels;
     }
 
@@ -72,6 +73,10 @@ public class Labels {
 
     public static Labels emptyLabels() {
         return new Labels(Map.of());
+    }
+
+    public Map<String, String> toMapView() {
+        return Map.copyOf(labels);
     }
 
     public boolean isEmpty() {

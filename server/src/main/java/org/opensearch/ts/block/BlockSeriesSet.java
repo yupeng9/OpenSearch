@@ -17,10 +17,15 @@ import org.opensearch.ts.model.SeriesSet;
  * Iterated series are trimmed with given min and max time
  */
 public class BlockSeriesSet implements SeriesSet {
-
     ChunkReader chunks;
     long minTime;
     long maxTime;
+
+    public BlockSeriesSet(ChunkReader chunks, long minTime, long maxTime) {
+        this.chunks = chunks;
+        this.minTime = minTime;
+        this.maxTime = maxTime;
+    }
 
     @Override
     public Series next() {
