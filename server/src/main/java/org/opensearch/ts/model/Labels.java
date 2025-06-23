@@ -24,6 +24,7 @@ import java.util.Objects;
  */
 public class Labels {
     private final Map<String, String> labels;
+    private long hash = Long.MIN_VALUE;
 
     public Labels(Map<String, String> labels) {
         this.labels = labels;
@@ -114,6 +115,10 @@ public class Labels {
 
     // TODO: replace with a better impl
     public long stableHash() {
+        if (hash != Long.MIN_VALUE) {
+            return hash;
+        }
+
         // combine logic from boost::hash_combine
         long combinedHash = 0;
         for (Map.Entry<String, String> entry : labels.entrySet()) {
@@ -124,6 +129,7 @@ public class Labels {
             hash = MurmurHash3.hash128(bytes, 0, bytes.length, 0, new MurmurHash3.Hash128()).hashCode();
             combinedHash ^= (hash + 0x9e3779b97f4a7c15L + (combinedHash << 6) + (combinedHash >> 2));
         }
+        hash = combinedHash;
         return combinedHash;
     }
 }

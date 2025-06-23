@@ -175,7 +175,7 @@ public class Head implements BlockReader {
      * ensure they are complete and accurate.
      */
     public void closeHeadChunks() {
-        List<MemSeries> allSeries = getStripeSeries().getSeries();
+        MemSeries[] allSeries = getStripeSeries().getSeries();
 
         Map<MemSeries, Set<MemChunk>> seriesToClosedChunks = indexCloseableChunks(allSeries);
         // todo: integrate with WAL, add metrics
@@ -188,7 +188,7 @@ public class Head implements BlockReader {
     /**
      * Iterate through series and index all MemChunks that can be closed. Returns a map of the series to a set of MemChunks that were indexed.
      */
-    private Map<MemSeries, Set<MemChunk>> indexCloseableChunks(List<MemSeries> seriesList) {
+    private Map<MemSeries, Set<MemChunk>> indexCloseableChunks(MemSeries[] seriesList) {
         Map<MemSeries, Set<MemChunk>> seriesToClosedChunks = new HashMap<>(); // track closed chunks per series, to remove later
         for (MemSeries series : seriesList) {
             List<MemChunk> chunksToClose = series.getClosableChunks();

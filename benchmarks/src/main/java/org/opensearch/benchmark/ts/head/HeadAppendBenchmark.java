@@ -96,6 +96,12 @@ public class HeadAppendBenchmark {
         }
     }
 
+    @TearDown
+    public void tearDown() throws IOException {
+        if (head != null) {
+            head.close();
+        }
+    }
 
     @Benchmark
     public void appendHead(Blackhole blackhole) throws IOException {

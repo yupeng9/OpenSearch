@@ -8,6 +8,8 @@
 
 package org.opensearch.ts.head;
 
+import org.apache.lucene.internal.hppc.LongObjectHashMap;
+import org.apache.lucene.internal.hppc.ObjectCursor;
 import org.opensearch.ts.model.Labels;
 
 import java.util.*;
@@ -18,12 +20,12 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  */
 public class StripeSeries {
     // TODO: why does prometheus do an additional sharding?
-    private final Map<Long, MemSeries> series;
+    private final LongObjectHashMap<MemSeries> series;
     private final SeriesHashmap seriesHashmap;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     public StripeSeries() {
-        series = new HashMap<>();
+        series = new LongObjectHashMap<>();
         seriesHashmap = new SeriesHashmap();
     }
 
@@ -38,10 +40,18 @@ public class StripeSeries {
     /**
      * Returns a list containing a snapshot of the current series.
      */
-    public List<MemSeries> getSeries() {
+    public MemSeries[] getSeries() {
         lock.readLock().lock();
         try {
-            return new ArrayList<>(series.values());
+            LongObjectHashMap<MemSeries>.ValuesContainer values = series.values();
+            MemSeries[] series = new MemSeries[values.size()];
+            Iterator<ObjectCursor<MemSeries>> iterator = values.iterator();
+            int i = 0;
+            while (iterator.hasNext()) {
+                ObjectCursor<MemSeries> cursor = iterator.next();
+                series[i++] = cursor.value;
+            }
+            return series;
         } finally {
             lock.readLock().unlock();
         }
@@ -58,11 +68,11 @@ public class StripeSeries {
     }
 
     public static class SeriesHashmap {
-        private Map<Long, MemSeries> unique;
-        private Map<Long, List<MemSeries>> conflicts;
+        private final LongObjectHashMap<MemSeries> unique;
+        private final Map<Long, List<MemSeries>> conflicts; // .get is rare, so unboxing isn't a major concern
 
         public SeriesHashmap() {
-            unique = new HashMap<>();
+            unique = new LongObjectHashMap<>();
             conflicts = new HashMap<>();
         }
 
