@@ -11,6 +11,7 @@ package org.opensearch.ts.head;
 import org.opensearch.ts.chunks.ChunkAppender;
 import org.opensearch.ts.chunks.Encoding;
 import org.opensearch.ts.chunks.MutableRawChunk;
+import org.opensearch.ts.chunks.XORChunk;
 import org.opensearch.ts.model.Labels;
 
 import java.util.ArrayList;
@@ -130,15 +131,15 @@ public class MemSeries {
             headChunkWriteLock.unlock();
         }
         // TODO: support other encoding
-        assert encoding == Encoding.RAW;
-        chunk.setChunk(new MutableRawChunk());
+        assert encoding == Encoding.XOR;
+        chunk.setChunk(new XORChunk());
         this.nextAt = rangeForTimestamp(minTime, chunkRange);
         this.chunkAppender = chunk.getChunk().appender();
         return chunk;
     }
 
     public boolean append(long timestamp, double value, ChunkOptions options) {
-        boolean created = appendPreprocessor(timestamp, Encoding.RAW, options);
+        boolean created = appendPreprocessor(timestamp, Encoding.XOR, options);
         chunkAppender.append(timestamp, value);
         headChunk.setMaxTimestamp(timestamp);
         this.lastValue = value;

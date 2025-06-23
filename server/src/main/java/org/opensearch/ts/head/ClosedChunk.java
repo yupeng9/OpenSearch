@@ -11,6 +11,7 @@ package org.opensearch.ts.head;
 import org.opensearch.ts.chunks.Chunk;
 import org.opensearch.ts.chunks.Encoding;
 import org.opensearch.ts.chunks.ImmutableRawChunk;
+import org.opensearch.ts.chunks.XORChunk;
 
 public class ClosedChunk implements HeadChunk {
 
@@ -24,7 +25,7 @@ public class ClosedChunk implements HeadChunk {
         this.maxTimestamp = maxTimestamp;
         this.chunk = switch (encoding) {
             case RAW -> new ImmutableRawChunk(bytes);
-            case XOR -> throw new UnsupportedOperationException("XOR encoding not yet supported");
+            case XOR -> new XORChunk(bytes);
             case CHIMP -> throw new UnsupportedOperationException("CHIMP encoding not yet supported");
         };
         this.uuid = uuid;

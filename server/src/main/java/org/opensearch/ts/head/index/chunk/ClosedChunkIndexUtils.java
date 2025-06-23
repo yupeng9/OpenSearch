@@ -14,6 +14,7 @@ import org.apache.lucene.util.BytesRef;
 import org.opensearch.ts.chunks.Chunk;
 import org.opensearch.ts.chunks.Encoding;
 import org.opensearch.ts.chunks.ImmutableRawChunk;
+import org.opensearch.ts.chunks.XORChunk;
 import org.opensearch.ts.head.ClosedChunk;
 import org.opensearch.ts.head.MemChunk;
 
@@ -54,11 +55,6 @@ public class ClosedChunkIndexUtils {
         byte[] chunkBytes = new byte[length - in.getPosition()];
         in.readBytes(chunkBytes, 0, chunkBytes.length);
 
-        Chunk chunk = switch (encoding) {
-            case RAW -> new ImmutableRawChunk(chunkBytes);
-            case XOR -> throw new UnsupportedOperationException("XOR encoding not yet supported");
-            case CHIMP -> throw new UnsupportedOperationException("CHIMP encoding not yet supported");
-        };
-        return new ClosedChunk(minTimestamp, maxTimestamp, chunkBytes, chunk.encoding(), uuid);
+        return new ClosedChunk(minTimestamp, maxTimestamp, chunkBytes, encoding, uuid);
     }
 }

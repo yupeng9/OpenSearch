@@ -10,6 +10,9 @@ package org.opensearch.ts.head;
 
 import org.opensearch.test.OpenSearchTestCase;
 import org.opensearch.ts.chunks.Chunk;
+import org.opensearch.ts.chunks.ChunkIterator;
+import org.opensearch.ts.chunks.ImmutableRawChunk;
+import org.opensearch.ts.chunks.XORChunk;
 import org.opensearch.ts.model.Labels;
 
 import java.io.IOException;
@@ -79,12 +82,33 @@ public class HeadTests extends OpenSearchTestCase {
 
     // helper appends timestamps and values from a chunk to the provided lists
     private void append(Chunk chunk, List<Long> timestamps, List<Double> values) {
+        switch (chunk.encoding()) {
+            case RAW:
+                appendRawChunk((ImmutableRawChunk) chunk, timestamps, values);
+                break;
+            case XOR:
+                appendXORChunk((XORChunk) chunk, timestamps, values);
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported chunk encoding: " + chunk.encoding());
+        }
+    }
+
+    private void appendRawChunk(ImmutableRawChunk chunk, List<Long> timestamps, List<Double> values) {
         // raw chunk bytes format is [timestamp, value, timestamp, value], stored as 8 byte longs
         ByteBuffer bytes = ByteBuffer.wrap(chunk.bytes()).asReadOnlyBuffer();
-
         for (int i = 0; i < chunk.numSamples(); i++) {
             timestamps.add(bytes.getLong());
             values.add(Double.longBitsToDouble(bytes.getLong()));
+        }
+    }
+
+    private void appendXORChunk(XORChunk chunk, List<Long> timestamps, List<Double> values) {
+        ChunkIterator iterator = chunk.iterator(null);
+        while (iterator.next() != ChunkIterator.ValueType.NONE) {
+            ChunkIterator.TimestampValue tv = iterator.at();
+            timestamps.add(tv.timestamp());
+            values.add(tv.value());
         }
     }
 }

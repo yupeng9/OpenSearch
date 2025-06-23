@@ -71,7 +71,6 @@ public class HeadAppender implements Appender {
             throw new IllegalArgumentException("Labels cannot be empty");
         }
 
-        // TODO: use better hashcode
         MemSeries series = head.createSeries(labels.hashCode(), labels, true, timestamp);
         seriesRefs.add(series.getReference());
         seriesList.add(series);

@@ -10,8 +10,10 @@ package org.opensearch.ts.model;
 
 import org.apache.lucene.store.ByteArrayDataInput;
 import org.apache.lucene.store.ByteArrayDataOutput;
+import org.opensearch.common.hash.MurmurHash3;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -106,7 +108,22 @@ public class Labels {
 
     @Override
     public int hashCode() {
-        // TODO: implement a similar stable hash as prometheus
-        return Objects.hash(labels);
+        long stableHash = stableHash();
+        return (int) (stableHash ^ (stableHash >>> 32));
+    }
+
+    // TODO: replace with a better impl
+    public long stableHash() {
+        // combine logic from boost::hash_combine
+        long combinedHash = 0;
+        for (Map.Entry<String, String> entry : labels.entrySet()) {
+            byte[] bytes = entry.getKey().getBytes(StandardCharsets.UTF_8);
+            long hash = MurmurHash3.hash128(bytes, 0, bytes.length, 0, new MurmurHash3.Hash128()).hashCode();
+            combinedHash ^= (hash + 0x9e3779b97f4a7c15L + (combinedHash << 6) + (combinedHash >> 2));
+            bytes = entry.getValue().getBytes(StandardCharsets.UTF_8);
+            hash = MurmurHash3.hash128(bytes, 0, bytes.length, 0, new MurmurHash3.Hash128()).hashCode();
+            combinedHash ^= (hash + 0x9e3779b97f4a7c15L + (combinedHash << 6) + (combinedHash >> 2));
+        }
+        return combinedHash;
     }
 }
