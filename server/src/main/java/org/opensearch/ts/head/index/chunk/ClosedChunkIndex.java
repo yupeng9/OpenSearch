@@ -37,17 +37,19 @@ import static org.opensearch.ts.head.index.chunk.ClosedChunkIndexUtils.getSerial
  */
 public class ClosedChunkIndex {
 
+    private final Path dir;
     private final Analyzer analyzer;
     private final Directory directory;
     private final IndexWriter indexWriter;
     private final SearcherManager searcherManager;
 
     public ClosedChunkIndex(Path dir) throws IOException {
-        Path indexPath = dir.resolve("headIndex");
+        Path indexPath = dir.resolve("block_" + System.currentTimeMillis()); // TODO: naming
         Files.createDirectory(indexPath);
+        this.dir = indexPath;
 
         analyzer = new WhitespaceAnalyzer(); // todo tune/span queries?
-        directory = new MMapDirectory(dir); // on heap since this impl only uses references to chunks
+        directory = new MMapDirectory(indexPath);
         try {
             indexWriter = new IndexWriter(directory, new IndexWriterConfig(analyzer));
             searcherManager = new SearcherManager(indexWriter, null);
@@ -114,10 +116,26 @@ public class ClosedChunkIndex {
         }
     }
 
-    public void close() throws IOException, InterruptedException {
-        analyzer.close();
-        searcherManager.close();
-        indexWriter.close();
-        directory.close();
+    public Path getDir() {
+        return dir;
+    }
+
+    public void forceMerge() {
+        try {
+            indexWriter.forceMerge(1);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to force merge", e);
+        }
+    }
+
+    public void close() {
+        try {
+            analyzer.close();
+            searcherManager.close();
+            indexWriter.close();
+            directory.close();
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to close ClosedChunkIndex", e);
+        }
     }
 }

@@ -14,23 +14,30 @@ import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.index.engine.EngineConfig;
 import org.opensearch.index.engine.EngineException;
 import org.opensearch.index.engine.InternalEngine;
+import org.opensearch.ts.block.LuceneDocPerChunkBlock;
 import org.opensearch.ts.compactor.Compactor;
 import org.opensearch.ts.compactor.LuceneDocPerChunkCompactor;
 import org.opensearch.ts.head.Head;
 import org.opensearch.ts.head.HeadAppender;
 import org.opensearch.ts.head.RangeHead;
+import org.opensearch.ts.head.index.chunk.ClosedChunkIndex;
 import org.opensearch.ts.model.Labels;
+import org.opensearch.ts.query.Querier;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
 /**
@@ -39,13 +46,16 @@ import java.util.stream.Collectors;
  */
 public class MetricsEngine extends InternalEngine {
 
-    private static final long MMAP_FREQUENCY = 60 * 1000;
-    private static final long COMPACT_FREQUENCY = 60 * 1000;
+    private static final long MMAP_FREQUENCY = Duration.ofMinutes(1).getSeconds();
+    private static final long FLUSH_FREQUENCY = Duration.ofHours(2).getSeconds();
 
     private Head head;
     private Path metricsStorePath;
     private ScheduledExecutorService executor;
     private final Lock headCompactionLock = new ReentrantLock();
+    private final Lock closeChunksLock = new ReentrantLock(); // control closing head chunks during ops like flushing head
+    private final ReadWriteLock blocksLock = new ReentrantReadWriteLock(); // thread-safe access to blocks
+    private final List<LuceneDocPerChunkBlock> blocks = new ArrayList<>();
 
     public MetricsEngine(EngineConfig engineConfig) throws IOException {
         this(engineConfig, null);
@@ -75,11 +85,18 @@ public class MetricsEngine extends InternalEngine {
 
     private void startBackgroundJobs() {
         // periodically mmap head chunks
-        executor.scheduleAtFixedRate(head::closeHeadChunks, MMAP_FREQUENCY, MMAP_FREQUENCY, java.util.concurrent.TimeUnit.MILLISECONDS);
+        executor.scheduleAtFixedRate(() -> {
+            closeChunksLock.lock();
+            try {
+                head.closeHeadChunks();
+            } finally {
+                closeChunksLock.unlock();
+            }
+        }, MMAP_FREQUENCY, MMAP_FREQUENCY, TimeUnit.SECONDS);
 
         // periodically compact head
         // TODO: maybe this should be done together with mmapheadChunks, one after the other?
-        executor.scheduleAtFixedRate(this::maybeSafeCompactHead, COMPACT_FREQUENCY, COMPACT_FREQUENCY, TimeUnit.MILLISECONDS);
+        executor.scheduleAtFixedRate(this::flushHead, FLUSH_FREQUENCY, FLUSH_FREQUENCY, TimeUnit.SECONDS);
     }
 
     public void close() throws IOException {
@@ -91,6 +108,56 @@ public class MetricsEngine extends InternalEngine {
 
     protected Head getHead() {
         return head;
+    }
+
+    /**
+     * Close the Head's current closedChunkIndex and make it available for querying via blocks. After this is called, closing chunks will
+     * add them to a new closedChunkIndex, which becomes the new current closedChunkIndex.
+     */
+    public void flushHead() {
+        ClosedChunkIndex closedChunkIndex = head.getCurrentClosedChunkIndex();
+        // Temporarily stop closing head chunks by acquiring the lock, since we're going to open a ref based on the current state
+        closeChunksLock.lock();
+        try {
+            closedChunkIndex.forceMerge(); // TODO consider performing this later in the background
+            closedChunkIndex.commit();
+            LuceneDocPerChunkBlock pendingBlock = new LuceneDocPerChunkBlock(closedChunkIndex.getDir());
+            pendingBlock.open();
+
+            // Make the pending block available for queries and switch the head to a new closedChunkIndex
+            head.prepareNewClosedChunkIndex();
+            blocksLock.writeLock().lock();
+            try {
+                head.cutClosedChunkIndex();
+                blocks.add(pendingBlock);
+            } finally {
+                blocksLock.writeLock().unlock();
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        } finally {
+            closeChunksLock.unlock(); // It's safe to close head chunks again
+        }
+
+        closedChunkIndex.close();
+    }
+
+    public Querier querier(long minTimetamp, long maxTimestamp) {
+        List<Querier> queriers = new ArrayList<>();
+
+        // TODO mint/maxt pruning
+        blocksLock.readLock().lock();
+        try {
+            queriers.add(head.newHeadQuerier()); // Ensure query accuracy by creating a Querier holding the current state of the head block
+
+            for (LuceneDocPerChunkBlock block : blocks) {
+                queriers.add(block);
+            }
+        } finally {
+            blocksLock.readLock().unlock();
+        }
+
+        return null; // todo return merged querier of List<Querier> queriers
     }
 
     /**

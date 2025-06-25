@@ -59,6 +59,7 @@ public class LuceneDocPerChunkBlock implements BlockReader, Querier {
     private IndexReader indexReader;
 
     public LuceneDocPerChunkBlock(Path luceneDir) {
+        // TODO store block min/max ts for block level pruning
         this.luceneDir = luceneDir;
     }
 

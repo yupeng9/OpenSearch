@@ -14,10 +14,10 @@ import org.apache.logging.log4j.Logger;
 import org.opensearch.ts.block.BlockReader;
 import org.opensearch.ts.head.index.chunk.ClosedChunkIndex;
 import org.opensearch.ts.head.index.live.LiveSeriesIndex;
-import org.opensearch.ts.block.BlockReader;
-import org.opensearch.ts.chunks.Chunk;
 import org.opensearch.ts.chunks.ChunkReader;
 import org.opensearch.ts.model.Labels;
+import org.opensearch.ts.model.SeriesSet;
+import org.opensearch.ts.query.Querier;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -26,6 +26,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class Head implements BlockReader {
     private static final Logger log = LogManager.getLogger(Head.class);
@@ -33,12 +35,13 @@ public class Head implements BlockReader {
     private final ShardId shardId;
     private final Path headDir;
     private final LiveSeriesIndex liveSeriesIndex;
-    private final ClosedChunkIndex closedChunkIndex;
     private final StripeSeries stripeSeries;
     private final AtomicLong seriesId = new AtomicLong(0);
     private final AtomicLong numSeries = new AtomicLong(0);
     private long minTime;
     private long maxTime;
+    private ClosedChunkIndex closedChunkIndex;
+    private ClosedChunkIndex newClosedChunkIndex;
 
     public Head(Path dir, ShardId shardId) {
         this.shardId = shardId;
@@ -142,8 +145,8 @@ public class Head implements BlockReader {
         Map<Integer, List<HeadChunk>> chunks = closedChunkIndex.getChunks(queryString, minTime, maxTime);
         List<Long> matchedSeries = liveSeriesIndex.getReferences(queryString, minTime);
 
+        // TODO: if we have per sample deduplication, can we entirely remove this dedup logic?
         Set<ByteBuffer> seenChunks = new HashSet<>(); // to deduplicate chunks that may be closed but not part of the index
-
         for (Long seriesRef : matchedSeries) {
             MemSeries series = stripeSeries.getById(seriesRef);
             int hash = series.getLabels().hashCode(); // todo: store hash instead of ref to avoid recomputing during queries?
@@ -164,6 +167,35 @@ public class Head implements BlockReader {
             }
         }
         return chunks;
+    }
+
+    /**
+     * Prepares a new ClosedChunkIndex, but does not begin using it
+     */
+    public void prepareNewClosedChunkIndex() {
+        if (newClosedChunkIndex != null) {
+            throw new IllegalStateException("New ClosedChunkIndex is already prepared, truncate it before preparing a new one");
+        }
+        try {
+            newClosedChunkIndex = new ClosedChunkIndex(headDir);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to open new ClosedChunkIndex", e);
+        }
+    }
+
+    /**
+     * Stop writing chunks to the current closedChunkIndex and begin using the previously prepared one.
+     */
+    public void cutClosedChunkIndex() {
+        if (newClosedChunkIndex == null) {
+            throw new IllegalStateException("New ClosedChunkIndex is must not be null, prepare a new one before truncating");
+        }
+        closedChunkIndex = newClosedChunkIndex;
+        newClosedChunkIndex = null;
+    }
+
+    public ClosedChunkIndex getCurrentClosedChunkIndex() {
+        return closedChunkIndex;
     }
 
     /**
@@ -262,5 +294,23 @@ public class Head implements BlockReader {
      */
     private boolean overlapsClosedInterval(HeadChunk chunk, long minTimestamp, long maxTimestamp) {
         return chunk.getMinTimestamp() <= maxTimestamp && minTimestamp <= chunk.getMaxTimestamp();
+    }
+
+    // TODO pass other required structs for querying
+    public HeadQuerier newHeadQuerier() {
+        return new HeadQuerier(closedChunkIndex);
+    }
+
+    public static class HeadQuerier implements Querier {
+        ClosedChunkIndex closedChunkIndex;
+
+        public HeadQuerier(ClosedChunkIndex closedChunkIndex) {
+            this.closedChunkIndex = closedChunkIndex;
+        }
+
+        @Override
+        public SeriesSet select(long mint, long maxt, Matcher... matchers) {
+            throw new UnsupportedOperationException("not yet implemented");
+        }
     }
 }
