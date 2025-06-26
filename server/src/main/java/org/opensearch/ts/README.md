@@ -9,7 +9,9 @@
 ```bash
 curl -X PUT -H 'Content-Type: application/json' http://localhost:9200/my-index --data '{
   "settings": {
-    "index.metrics.enabled":true
+    "index.metrics.enabled":true,
+    "index.number_of_shards": 1,
+    "index.number_of_replicas": 0
   },
   "mappings": {
     "properties": {

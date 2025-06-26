@@ -14,6 +14,12 @@ import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.index.engine.EngineConfig;
 import org.opensearch.index.engine.EngineException;
 import org.opensearch.index.engine.InternalEngine;
+import org.opensearch.index.translog.NoOpTranslogManager;
+import org.opensearch.index.translog.Translog;
+import org.opensearch.index.translog.TranslogDeletionPolicy;
+import org.opensearch.index.translog.TranslogManager;
+import org.opensearch.index.translog.TranslogStats;
+import org.opensearch.index.translog.listener.CompositeTranslogEventListener;
 import org.opensearch.ts.block.LuceneDocPerChunkBlock;
 import org.opensearch.ts.compactor.Compactor;
 import org.opensearch.ts.compactor.LuceneDocPerChunkCompactor;
@@ -39,6 +45,8 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
+
+import static org.opensearch.index.translog.Translog.EMPTY_TRANSLOG_SNAPSHOT;
 
 /**
  * An engine for Metrics
@@ -77,6 +85,24 @@ public class MetricsEngine extends InternalEngine {
 
         executor = Executors.newScheduledThreadPool(2); // TODO check os packages
         startBackgroundJobs();
+    }
+
+    // TODO: implement real translog manager. This is a workaround so index API doesn't crash.
+    @Override
+    protected TranslogManager createTranslogManager(
+        String translogUUID,
+        TranslogDeletionPolicy translogDeletionPolicy,
+        CompositeTranslogEventListener translogEventListener
+    ) throws IOException {
+        return new NoOpTranslogManager(
+            shardId,
+            readLock,
+            this::ensureOpen,
+            new TranslogStats(),
+            EMPTY_TRANSLOG_SNAPSHOT,
+            translogUUID,
+            true
+        );
     }
 
     protected MetricsAppender newAppender() {
@@ -208,22 +234,35 @@ public class MetricsEngine extends InternalEngine {
 
     @Override
     public IndexResult index(Index index) throws IOException {
-        // TODO: call metrics appender
-        XContentBuilder builder = XContentFactory.jsonBuilder();
-        Map<String, Object> map = XContentHelper.convertToMap(index.parsedDoc().source(), false, index.parsedDoc().getMediaType()).v2();
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder();
+            Map<String, Object> map = XContentHelper.convertToMap(index.parsedDoc().source(), false, index.parsedDoc().getMediaType()).v2();
 
-        MetricDocument metricDocument = MetricDocument.fromJson(map);
+            MetricDocument metricDocument = MetricDocument.fromJson(map);
 
-        Appender headAppender = newAppender();
-        long seriesRef = 0;
-        for (MetricDocument.Sample sample : metricDocument.samples) {
-            seriesRef = headAppender.append(seriesRef, metricDocument.labels, sample.timestamp, sample.value);
+            Appender headAppender = newAppender();
+            long seriesRef = 0;
+            for (MetricDocument.Sample sample : metricDocument.samples) {
+                seriesRef = headAppender.append(seriesRef, metricDocument.labels, sample.timestamp, sample.value);
+            }
+            headAppender.commit();
+
+            if (logger.isDebugEnabled()) {
+                logger.debug("received sample {}", builder.value(map).toString());
+            }
+            long dummyVersion = System.nanoTime(); // TODO: use a real versioning system
+            var indexResult = new IndexResult(
+                dummyVersion,
+                index.primaryTerm(),
+                index.seqNo(),
+                true
+            );
+            final var location = translogManager.add(new Translog.Index(index, indexResult));
+//            indexResult.setTranslogLocation(location);
+            return indexResult;
+        } catch (IOException e) {
+            throw new EngineException(shardId, "Failed to index metric document", e);
         }
-        headAppender.commit();
-
-        builder.value(map);
-        logger.info("received sample {}", builder.toString());
-        return null;
     }
 
     @Override
