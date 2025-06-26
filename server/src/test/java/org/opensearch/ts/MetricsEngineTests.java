@@ -26,6 +26,7 @@ import org.opensearch.index.VersionType;
 import org.opensearch.index.engine.Engine;
 import org.opensearch.index.engine.EngineConfig;
 import org.opensearch.index.engine.EngineTestCase;
+import org.opensearch.index.engine.MetricsEngine;
 import org.opensearch.index.mapper.DocumentMapperForType;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.index.mapper.ParsedDocument;

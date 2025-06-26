@@ -6,20 +6,18 @@
  * compatible open source license.
  */
 
-package org.opensearch.ts;
+package org.opensearch.index.engine;
 
 import org.opensearch.common.xcontent.XContentFactory;
 import org.opensearch.common.xcontent.XContentHelper;
 import org.opensearch.core.xcontent.XContentBuilder;
-import org.opensearch.index.engine.EngineConfig;
-import org.opensearch.index.engine.EngineException;
-import org.opensearch.index.engine.InternalEngine;
 import org.opensearch.index.translog.NoOpTranslogManager;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.index.translog.TranslogDeletionPolicy;
 import org.opensearch.index.translog.TranslogManager;
 import org.opensearch.index.translog.TranslogStats;
 import org.opensearch.index.translog.listener.CompositeTranslogEventListener;
+import org.opensearch.ts.Appender;
 import org.opensearch.ts.block.LuceneDocPerChunkBlock;
 import org.opensearch.ts.compactor.Compactor;
 import org.opensearch.ts.compactor.LuceneDocPerChunkCompactor;
@@ -258,7 +256,7 @@ public class MetricsEngine extends InternalEngine {
                 true
             );
             final var location = translogManager.add(new Translog.Index(index, indexResult));
-//            indexResult.setTranslogLocation(location);
+            indexResult.setTranslogLocation(location);
             return indexResult;
         } catch (IOException e) {
             throw new EngineException(shardId, "Failed to index metric document", e);
@@ -329,9 +327,9 @@ public class MetricsEngine extends InternalEngine {
      *         """
      * </pre>
      */
-    record MetricDocument(Labels labels, List<Sample> samples) {
-        record Label(String name, String value) { }
-        record Sample(long timestamp, double value) { }
+    public record MetricDocument(Labels labels, List<Sample> samples) {
+        public record Label(String name, String value) { }
+        public record Sample(long timestamp, double value) { }
 
         public static MetricDocument fromJson(Map<String, Object> source) {
             var inputLabels = (List<Map<String, String>>) source.getOrDefault("labels", List.of());

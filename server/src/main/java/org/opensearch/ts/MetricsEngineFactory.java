@@ -11,6 +11,7 @@ package org.opensearch.ts;
 import org.opensearch.index.engine.Engine;
 import org.opensearch.index.engine.EngineConfig;
 import org.opensearch.index.engine.EngineFactory;
+import org.opensearch.index.engine.MetricsEngine;
 
 import java.io.IOException;
 
