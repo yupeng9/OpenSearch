@@ -10,22 +10,23 @@ package org.opensearch.ts.head;
 
 import org.apache.lucene.internal.hppc.LongObjectHashMap;
 import org.apache.lucene.internal.hppc.ObjectCursor;
+import org.opensearch.common.util.concurrent.ConcurrentHashMapLong;
 import org.opensearch.ts.model.Labels;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * A collection of series. The series can be looked up by either hash or ID.
  */
 public class StripeSeries {
-    // TODO: why does prometheus do an additional sharding?
-    private final LongObjectHashMap<MemSeries> series;
+    // TODO: prometheus does it's own sharding to avoid lock contention, is java's concurrent map good enough?
+    private final ConcurrentHashMapLong<MemSeries> series;
     private final SeriesHashmap seriesHashmap;
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     public StripeSeries() {
-        series = new LongObjectHashMap<>();
+        series = new ConcurrentHashMapLong<>(new ConcurrentHashMap<>());
         seriesHashmap = new SeriesHashmap();
     }
 
@@ -40,40 +41,28 @@ public class StripeSeries {
     /**
      * Returns a list containing a snapshot of the current series.
      */
-    public MemSeries[] getSeries() {
-        lock.readLock().lock();
-        try {
-            LongObjectHashMap<MemSeries>.ValuesContainer values = series.values();
-            MemSeries[] series = new MemSeries[values.size()];
-            Iterator<ObjectCursor<MemSeries>> iterator = values.iterator();
-            int i = 0;
-            while (iterator.hasNext()) {
-                ObjectCursor<MemSeries> cursor = iterator.next();
-                series[i++] = cursor.value;
-            }
-            return series;
-        } finally {
-            lock.readLock().unlock();
-        }
+    public List<MemSeries> getSeries() {
+        return new ArrayList<>(series.values());
     }
 
     public void set(long hash, MemSeries s) {
-        lock.writeLock().lock();
-        try {
-            series.put(s.getReference(), s);
-            seriesHashmap.set(hash, s); // separate locks?
-        } finally {
-            lock.writeLock().unlock();
-        }
+        series.put(s.getReference(), s);
+        seriesHashmap.set(hash, s);
+    }
+
+    public void delete(MemSeries s) {
+        long ref = s.getReference();
+        series.remove(ref);
+        seriesHashmap.delete(s.getLabels().hashCode(), ref);
     }
 
     public static class SeriesHashmap {
-        private final LongObjectHashMap<MemSeries> unique;
-        private final Map<Long, List<MemSeries>> conflicts; // .get is rare, so unboxing isn't a major concern
+        private final ConcurrentHashMapLong<MemSeries> unique;
+        private final ConcurrentHashMapLong<List<MemSeries>> conflicts; // .get is rare, so unboxing isn't a major concern
 
         public SeriesHashmap() {
-            unique = new LongObjectHashMap<>();
-            conflicts = new HashMap<>();
+            unique = new ConcurrentHashMapLong<>(new ConcurrentHashMap<>());
+            conflicts = new ConcurrentHashMapLong<>(new ConcurrentHashMap<>());
         }
 
         public MemSeries get(long hash, Labels labels) {
@@ -84,7 +73,7 @@ public class StripeSeries {
             List<MemSeries> conflictList = conflicts.get(hash);
             if (conflictList != null) {
                 for (MemSeries series : conflictList) {
-                    if (labels.equals(s.getLabels())) {
+                    if (labels.equals(series.getLabels())) {
                         return series;
                     }
                 }
@@ -95,6 +84,7 @@ public class StripeSeries {
         public void set(long hash, MemSeries s) {
             MemSeries existing = unique.get(hash);
             // TODO: why does prometheuse use || ?
+            //   => series refs can change during their compaction or wal replay, do we also need to use ||?
             if (existing == null || existing.getLabels().equals(s.getLabels())) {
                 unique.put(hash, s);
                 return;
@@ -125,8 +115,8 @@ public class StripeSeries {
                     unique.remove(hash);
                     return;
                 }
-                unique.put(hash, conflictList.get(0));
-                conflictList.remove(0);
+                unique.put(hash, conflictList.getFirst());
+                conflictList.removeFirst();
             } else {
                 if (conflictList == null) return;
 

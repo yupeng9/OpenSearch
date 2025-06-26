@@ -10,14 +10,13 @@ package org.opensearch.ts.head;
 
 import org.opensearch.ts.chunks.ChunkAppender;
 import org.opensearch.ts.chunks.Encoding;
-import org.opensearch.ts.chunks.MutableRawChunk;
 import org.opensearch.ts.chunks.XORChunk;
 import org.opensearch.ts.model.Labels;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * In-memory representation of a series.
@@ -33,21 +32,14 @@ public class MemSeries {
     // labels of the series (TODO do we need to keep this in memory?)
     private final Labels labels;
 
-    // Atomically update headChunk list and mmappedChunks when mmapping or truncating
-    private final ReentrantReadWriteLock chunkListsLock = new ReentrantReadWriteLock();
-
-    // TODO update during truncation
-    private long firstChunkId;
+    // Lock should be held when using any vars defined below this point
+    private final ReentrantLock seriesLock = new ReentrantLock();
 
     // A linked list of chunks in memory being built or to be mmapped. This points to the most recent chunk.
     private MemChunk headChunk;
-    private final ReentrantLock headChunkWriteLock = new ReentrantLock();
 
     // Max timestamp of the head chunk, used for checking ooo/duplicates
     private long maxTimestamp;
-
-    // Max time of MMAP'd chunk, used during WAL replay
-    private long mmapMaxTimestamp;
 
     // timestamp at which to cut the next chunk
     private long nextAt;
@@ -58,6 +50,9 @@ public class MemSeries {
     private ChunkAppender chunkAppender;
 
     private boolean pendingCommit;
+
+    // Previously empty in a GC cycle, may be removed in the next GC cycle
+    private boolean pendingGC;
 
     public MemSeries(long reference, Labels labels, boolean pendingCommit) {
         this.reference = reference;
@@ -77,11 +72,11 @@ public class MemSeries {
         pendingCommit = false;
     }
 
-    // TODO: locking? can multiple threads write?
     private boolean appendPreprocessor(long timestamp, Encoding encoding, ChunkOptions options) {
         boolean created = false;
         if (headChunk == null) {
-            // TODO: ooo handling, do not create if ooo sample (implied, memseries contains mmap chunks only)
+            // TODO: ooo handling, do not create if ooo sample
+            pendingGC = false; // ensure the series will not be concurrently removed if this is the first sample in a long time
             headChunk = createHeadChunk(timestamp, encoding, options.chunkRange());
             created = true;
         }
@@ -124,11 +119,11 @@ public class MemSeries {
     private MemChunk createHeadChunk(long minTime, Encoding encoding, long chunkRange) {
         MemChunk chunk = new MemChunk(minTime, Long.MIN_VALUE, headChunk);
 
-        headChunkWriteLock.lock();
+        seriesLock.lock();
         try {
             this.headChunk = chunk;
         } finally {
-            headChunkWriteLock.unlock();
+            seriesLock.unlock();
         }
         // TODO: support other encoding
         assert encoding == Encoding.XOR;
@@ -138,11 +133,15 @@ public class MemSeries {
         return chunk;
     }
 
+    /**
+     * Append an in order sample to the series. The series lock should be held when calling this method
+     */
     public boolean append(long timestamp, double value, ChunkOptions options) {
         boolean created = appendPreprocessor(timestamp, Encoding.XOR, options);
         chunkAppender.append(timestamp, value);
         headChunk.setMaxTimestamp(timestamp);
         this.lastValue = value;
+        this.pendingGC = false;
         return created;
     }
 
@@ -161,30 +160,64 @@ public class MemSeries {
         return headChunk;
     }
 
-    public void setHeadChunk(MemChunk chunk) {
-        this.headChunk = chunk;
+    public boolean getPendingGC() {
+        return pendingGC;
+    }
+
+    public void setPendingGC(boolean pendingGC) {
+        this.pendingGC = pendingGC;
     }
 
     public List<MemChunk> getClosableChunks() {
-        List<MemChunk> closableChunks = new ArrayList<>();
-        MemChunk headChunk = this.headChunk;
-        if (headChunk == null || headChunk.getPrev() == null) {
-            return closableChunks; // nothing to map
-        }
+        lock();
+        try {
+            List<MemChunk> closableChunks = new ArrayList<>();
+            MemChunk headChunk = this.headChunk;
+            if (headChunk == null || headChunk.getPrev() == null) {
+                return closableChunks; // nothing to map
+            }
 
-        for (int i = headChunk.len() - 1; i > 0; i--) {
-            closableChunks.add(headChunk.atOffset(i));
-            // todo: if curr time is significantly larger than headChunk.nextAt, we may seal the head chunk and mmap it too (e.g. series churn)
-        }
+            for (int i = headChunk.len() - 1; i > 0; i--) {
+                closableChunks.add(headChunk.atOffset(i));
+                // todo: if curr time is significantly larger than headChunk.nextAt, we may seal the head chunk and mmap it too (e.g. series churn)
+            }
 
-        return closableChunks;
+            return closableChunks;
+        } finally {
+            unlock();
+        }
     }
 
-    public void lockHeadChunk() {
-        headChunkWriteLock.lock();
+    public void dropClosedChunks(Set<MemChunk> closedChunks) {
+        lock();
+        try {
+            MemChunk curr = headChunk;
+            while (curr != null) {
+                if (closedChunks.contains(curr)) {
+                    if (curr.getPrev() != null) {
+                        curr.getPrev().setNext(curr.getNext());
+                    }
+
+                    if (curr.getNext() != null) {
+                        curr.getNext().setPrev(curr.getPrev());
+                    }
+
+                    if (curr == headChunk) {
+                        headChunk = curr.getPrev();
+                    }
+                }
+                curr = curr.getPrev();
+            }
+        } finally {
+            unlock();
+        }
     }
 
-    public void unlockHeadChunk() {
-        headChunkWriteLock.unlock();
+    public void lock() {
+        seriesLock.lock();
+    }
+
+    public void unlock() {
+        seriesLock.unlock();
     }
 }

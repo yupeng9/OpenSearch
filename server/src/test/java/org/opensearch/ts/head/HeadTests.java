@@ -17,7 +17,6 @@ import org.opensearch.ts.model.Labels;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -76,6 +75,33 @@ public class HeadTests extends OpenSearchTestCase {
 
         assertEquals(expectedTimestamps, actualTimestamps);
         assertEquals(expectedValues, actualValues);
+
+        head.close();
+    }
+
+    public void testHeadGC() throws IOException {
+        Head head = new Head(createTempDir("testHeadGC"));
+        HeadAppender.CommitContext context = new HeadAppender.CommitContext(new ChunkOptions(1000, 10));
+        Labels seriesNoData = Labels.fromStrings("k1", "v1", "k2", "v2");
+        Labels seriesWithData = Labels.fromStrings("k1", "v1", "k3", "v3");
+
+        MemSeries emptySeries = head.createSeries(seriesNoData.hashCode(), seriesNoData, true, 0L);
+        HeadAppender appender = head.newAppender();
+        for (int i = 0; i < 8; i++) {
+            appender.append(0, seriesWithData, i++, i);
+
+        }
+        appender.commitSamples(context);
+
+        head.closeHeadChunks();
+        // both series present after the first closeHeadChunks invocation
+        assertNotNull(head.getStripeSeries().getByHash(seriesNoData.hashCode(), seriesNoData));
+        assertNotNull(head.getStripeSeries().getByHash(seriesWithData.hashCode(), seriesWithData));
+
+        head.closeHeadChunks();
+        // empty series removed after the second closeHeadChunks invocation
+        assertNull(head.getStripeSeries().getByHash(seriesNoData.hashCode(), seriesNoData));
+        assertNotNull(head.getStripeSeries().getByHash(seriesWithData.hashCode(), seriesWithData));
 
         head.close();
     }

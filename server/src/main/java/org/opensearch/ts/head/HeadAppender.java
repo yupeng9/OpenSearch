@@ -94,20 +94,24 @@ public class HeadAppender implements Appender {
         for (int i = 0; i < refSamples.size(); i++) {
             RefSample refSample = refSamples.get(i);
             MemSeries s = sampleSeries.get(i);
+            s.lock();
+            try {
+                if (s.isOOO(refSample.getTimestamp())) {
+                    return; // TODO: ooo handling - for now skip
+                }
 
-            if (s.isOOO(refSample.getTimestamp())) {
-                return; // TODO: ooo handling - for now skip
-            }
-
-            // TODO: appender isolation handling
-            boolean chunkCreated = s.append(refSample.getTimestamp(), refSample.getValue(), context.options);
-            if (chunkCreated) {
-                // TODO: update metrics
-                logger.debug("Created new chunk for series: {}", s.getReference());
-            }
-            logger.debug("Appending sample: timestamp={}, value={}, seriesRef={}",
+                // TODO: appender isolation handling
+                boolean chunkCreated = s.append(refSample.getTimestamp(), refSample.getValue(), context.options);
+                if (chunkCreated) {
+                    // TODO: update metrics
+                    logger.debug("Created new chunk for series: {}", s.getReference());
+                }
+                logger.debug("Appending sample: timestamp={}, value={}, seriesRef={}",
                     refSample.getTimestamp(), refSample.getValue(), refSample.getReference());
-            s.commit();
+                s.commit();
+            } finally {
+                s.unlock();
+            }
         }
     }
 

@@ -26,8 +26,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class Head implements BlockReader {
     private static final Logger log = LogManager.getLogger(Head.class);
@@ -119,13 +117,6 @@ public class Head implements BlockReader {
         return newSeries;
     }
 
-    /**
-     * Creates a series with the given hash and MemSeries object, used when loading snapshot. When this is used,
-     * numSeries and seriesId should be updated independently
-     */
-    private void createSeries(MemSeries memSeries) {
-        stripeSeries.set(memSeries.getLabels().hashCode(), memSeries);
-    }
 
     public HeadChunkReader chunksRange(long minTime, long maxTime) {
         long mint = minTime;
@@ -140,7 +131,7 @@ public class Head implements BlockReader {
         return chunksRange(Long.MIN_VALUE, Long.MAX_VALUE);
     }
 
-    // helper method for testing, replace when query side is further implemented
+    // helper method for testing, replace in HeadQuerier when query side is further implemented
     public Map<Integer, List<HeadChunk>> matchingChunks(String queryString, long minTime, long maxTime) {
         Map<Integer, List<HeadChunk>> chunks = closedChunkIndex.getChunks(queryString, minTime, maxTime);
         List<Long> matchedSeries = liveSeriesIndex.getReferences(queryString, minTime);
@@ -207,20 +198,20 @@ public class Head implements BlockReader {
      * ensure they are complete and accurate.
      */
     public void closeHeadChunks() {
-        MemSeries[] allSeries = getStripeSeries().getSeries();
+        List<MemSeries> allSeries = getStripeSeries().getSeries();
 
         Map<MemSeries, Set<MemChunk>> seriesToClosedChunks = indexCloseableChunks(allSeries);
         // todo: integrate with WAL, add metrics
         closedChunkIndex.commit();
         closedChunkIndex.refresh();
         dropClosedChunks(seriesToClosedChunks);
-        dropEmptySeries(seriesToClosedChunks.keySet());
+        dropEmptySeries();
     }
 
     /**
      * Iterate through series and index all MemChunks that can be closed. Returns a map of the series to a set of MemChunks that were indexed.
      */
-    private Map<MemSeries, Set<MemChunk>> indexCloseableChunks(MemSeries[] seriesList) {
+    private Map<MemSeries, Set<MemChunk>> indexCloseableChunks(List<MemSeries> seriesList) {
         Map<MemSeries, Set<MemChunk>> seriesToClosedChunks = new HashMap<>(); // track closed chunks per series, to remove later
         for (MemSeries series : seriesList) {
             List<MemChunk> chunksToClose = series.getClosableChunks();
@@ -244,36 +235,36 @@ public class Head implements BlockReader {
     private void dropClosedChunks(Map<MemSeries, Set<MemChunk>> seriesToClosedChunks) {
         for (Map.Entry<MemSeries, Set<MemChunk>> entry : seriesToClosedChunks.entrySet()) {
             MemSeries series = entry.getKey();
-            Set<MemChunk> closedChunks = entry.getValue();
-
-            // locking the series ensures head chunk is not updated concurrently
-            series.lockHeadChunk();
-            try {
-                MemChunk curr = series.getHeadChunk();
-                while (curr != null) {
-                    if (closedChunks.contains(curr)) {
-                        if (curr.getPrev() != null) {
-                            curr.getPrev().setNext(curr.getNext());
-                        }
-
-                        if (curr.getNext() != null) {
-                            curr.getNext().setPrev(curr.getPrev());
-                        }
-
-                        if (curr == series.getHeadChunk()) {
-                            series.setHeadChunk(curr.getPrev());
-                        }
-                    }
-                    curr = curr.getPrev();
-                }
-            } finally {
-                series.unlockHeadChunk();
-            }
+            series.dropClosedChunks(entry.getValue());
         }
     }
 
-    private void dropEmptySeries(Set<MemSeries> series) {
-        // todo: remove empty series that have no chunks left, and remove from the index
+    private void dropEmptySeries() {
+        List<Long> refs = new ArrayList<>();
+        List<MemSeries> allSeries = stripeSeries.getSeries();
+        for (MemSeries series : allSeries) {
+            series.lock();
+            try {
+                if (series.getHeadChunk() != null) {
+                    continue; // cannot gc series that has data
+                }
+                if (!series.getPendingGC()) {
+                    series.setPendingGC(true); // mark for GC next iteration
+                    continue;
+                }
+                refs.add(series.getReference());
+                stripeSeries.delete(series);
+            } finally {
+                series.unlock();
+            }
+        }
+
+        try {
+            liveSeriesIndex.removeSeries(refs);
+            numSeries.getAndUpdate(current -> current - refs.size());
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**
