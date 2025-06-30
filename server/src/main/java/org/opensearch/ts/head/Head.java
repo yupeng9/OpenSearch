@@ -18,6 +18,7 @@ import org.opensearch.ts.chunks.ChunkReader;
 import org.opensearch.ts.model.Labels;
 import org.opensearch.ts.model.SeriesSet;
 import org.opensearch.ts.query.Querier;
+import org.apache.lucene.index.IndexReader;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -54,7 +55,7 @@ public class Head implements BlockReader {
             throw new RuntimeException("Failed to create head directory: " + headDir, e);
         }
 
-        liveSeriesIndex = new LiveSeriesIndex();
+        liveSeriesIndex = new LiveSeriesIndex(shardId);
         try {
             closedChunkIndex = new ClosedChunkIndex(headDir);
         } catch (IOException e) {
@@ -187,6 +188,13 @@ public class Head implements BlockReader {
 
     public ClosedChunkIndex getCurrentClosedChunkIndex() {
         return closedChunkIndex;
+    }
+
+    /**
+     * Get the LiveSeriesIndex for search operations.
+     */
+    public LiveSeriesIndex getLiveSeriesIndex() {
+        return liveSeriesIndex;
     }
 
     /**

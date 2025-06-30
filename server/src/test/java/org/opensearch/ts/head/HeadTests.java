@@ -44,7 +44,9 @@ public class HeadTests extends OpenSearchTestCase {
             appender.commitSamples(context);
         }
 
-        Thread.sleep(2000L); // allow the live index to refresh
+        // allow the live index to refresh
+        head.getLiveSeriesIndex().getOpenSearchReaderManager().maybeRefreshBlocking();
+//        Thread.sleep(2000L);
 
         head.closeHeadChunks();
 

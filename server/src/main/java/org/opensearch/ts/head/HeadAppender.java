@@ -97,6 +97,7 @@ public class HeadAppender implements Appender {
             s.lock();
             try {
                 if (s.isOOO(refSample.getTimestamp())) {
+                    logger.warn("Sample with timestamp {} is out of order for series: {}", refSample.getTimestamp(), s.getReference());
                     return; // TODO: ooo handling - for now skip
                 }
 
@@ -104,9 +105,9 @@ public class HeadAppender implements Appender {
                 boolean chunkCreated = s.append(refSample.getTimestamp(), refSample.getValue(), context.options);
                 if (chunkCreated) {
                     // TODO: update metrics
-                    logger.debug("Created new chunk for series: {}", s.getReference());
+                    logger.info("Created new chunk for series: {}", s.getReference());
                 }
-                logger.debug("Appending sample: timestamp={}, value={}, seriesRef={}",
+                logger.info("Appending sample: timestamp={}, value={}, seriesRef={}",
                     refSample.getTimestamp(), refSample.getValue(), refSample.getReference());
                 s.commit();
             } finally {

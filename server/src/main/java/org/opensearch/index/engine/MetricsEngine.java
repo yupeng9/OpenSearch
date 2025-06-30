@@ -8,15 +8,20 @@
 
 package org.opensearch.index.engine;
 
-import org.opensearch.common.xcontent.XContentFactory;
+import org.apache.lucene.index.IndexCommit;
+import org.apache.lucene.index.SegmentInfos;
+import org.apache.lucene.search.ReferenceManager;
+import org.opensearch.common.concurrent.GatedCloseable;
+import org.opensearch.common.lucene.index.OpenSearchDirectoryReader;
+import org.opensearch.common.metrics.CounterMetric;
+import org.opensearch.common.util.concurrent.ReleasableLock;
 import org.opensearch.common.xcontent.XContentHelper;
-import org.opensearch.core.xcontent.XContentBuilder;
+import org.opensearch.index.seqno.SeqNoStats;
 import org.opensearch.index.translog.NoOpTranslogManager;
 import org.opensearch.index.translog.Translog;
-import org.opensearch.index.translog.TranslogDeletionPolicy;
 import org.opensearch.index.translog.TranslogManager;
 import org.opensearch.index.translog.TranslogStats;
-import org.opensearch.index.translog.listener.CompositeTranslogEventListener;
+import org.opensearch.search.suggest.completion.CompletionStats;
 import org.opensearch.ts.Appender;
 import org.opensearch.ts.block.LuceneDocPerChunkBlock;
 import org.opensearch.ts.compactor.Compactor;
@@ -28,6 +33,7 @@ import org.opensearch.ts.head.index.chunk.ClosedChunkIndex;
 import org.opensearch.ts.model.Labels;
 import org.opensearch.ts.query.Querier;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,13 +41,18 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.opensearch.index.translog.Translog.EMPTY_TRANSLOG_SNAPSHOT;
@@ -50,7 +61,7 @@ import static org.opensearch.index.translog.Translog.EMPTY_TRANSLOG_SNAPSHOT;
  * An engine for Metrics
  * TODO: convert this to an OpenSearch engine
  */
-public class MetricsEngine extends InternalEngine {
+public class MetricsEngine extends Engine {
 
     private static final long MMAP_FREQUENCY = Duration.ofMinutes(1).getSeconds();
     private static final long FLUSH_FREQUENCY = Duration.ofHours(2).getSeconds();
@@ -62,6 +73,16 @@ public class MetricsEngine extends InternalEngine {
     private final Lock closeChunksLock = new ReentrantLock(); // control closing head chunks during ops like flushing head
     private final ReadWriteLock blocksLock = new ReentrantReadWriteLock(); // thread-safe access to blocks
     private final List<LuceneDocPerChunkBlock> blocks = new ArrayList<>();
+
+    // Engine state management
+    private final AtomicLong maxSeqNoOfUpdatesOrDeletes = new AtomicLong(0);
+    private final AtomicLong maxSeenAutoIdTimestamp = new AtomicLong(-1);
+    private final AtomicLong maxUnsafeAutoIdTimestamp = new AtomicLong(-1);
+    private final CounterMetric throttleTimeMillisMetric = new CounterMetric();
+    private final AtomicBoolean isThrottled = new AtomicBoolean(false);
+    private final ReleasableLock throttleLock = new ReleasableLock(new ReentrantLock());
+    private final TranslogManager translogManager;
+    private final String historyUUID;
 
     public MetricsEngine(EngineConfig engineConfig) throws IOException {
         this(engineConfig, null);
@@ -79,28 +100,39 @@ public class MetricsEngine extends InternalEngine {
 
         Files.createDirectories(metricsStorePath);
 
-        head = new Head(metricsStorePath);
+        head = new Head(metricsStorePath, engineConfig.getShardId());
 
-        executor = Executors.newScheduledThreadPool(2); // TODO check os packages
-        startBackgroundJobs();
-    }
-
-    // TODO: implement real translog manager. This is a workaround so index API doesn't crash.
-    @Override
-    protected TranslogManager createTranslogManager(
-        String translogUUID,
-        TranslogDeletionPolicy translogDeletionPolicy,
-        CompositeTranslogEventListener translogEventListener
-    ) throws IOException {
-        return new NoOpTranslogManager(
+        // Create a simple translog manager for now
+        this.translogManager = new NoOpTranslogManager(
             shardId,
             readLock,
             this::ensureOpen,
             new TranslogStats(),
             EMPTY_TRANSLOG_SNAPSHOT,
-            translogUUID,
+            "metrics-translog-uuid",
             true
         );
+
+        // Try to load history UUID from store, or generate a consistent one
+        String historyUUIDValue;
+        try {
+            final Map<String, String> userData = store.readLastCommittedSegmentsInfo().getUserData();
+            String existingHistoryUUID = userData.get(HISTORY_UUID_KEY);
+            if (existingHistoryUUID != null) {
+                historyUUIDValue = existingHistoryUUID;
+            } else {
+                // Generate a consistent history UUID based on the shard path
+                historyUUIDValue = "metrics-history-" + engineConfig.getShardId().toString().hashCode();
+            }
+        } catch (Exception e) {
+            // If we can't read from store, generate a consistent history UUID
+            historyUUIDValue = "metrics-history-" + engineConfig.getShardId().toString().hashCode();
+        }
+        this.historyUUID = historyUUIDValue;
+
+
+        executor = Executors.newScheduledThreadPool(2); // TODO check os packages
+        startBackgroundJobs();
     }
 
     protected MetricsAppender newAppender() {
@@ -123,6 +155,7 @@ public class MetricsEngine extends InternalEngine {
         executor.scheduleAtFixedRate(this::flushHead, FLUSH_FREQUENCY, FLUSH_FREQUENCY, TimeUnit.SECONDS);
     }
 
+    @Override
     public void close() throws IOException {
         metricsStorePath = null;
         head.close();
@@ -233,7 +266,6 @@ public class MetricsEngine extends InternalEngine {
     @Override
     public IndexResult index(Index index) throws IOException {
         try {
-            XContentBuilder builder = XContentFactory.jsonBuilder();
             Map<String, Object> map = XContentHelper.convertToMap(index.parsedDoc().source(), false, index.parsedDoc().getMediaType()).v2();
 
             MetricDocument metricDocument = MetricDocument.fromJson(map);
@@ -246,7 +278,7 @@ public class MetricsEngine extends InternalEngine {
             headAppender.commit();
 
             if (logger.isDebugEnabled()) {
-                logger.debug("received sample {}", builder.value(map).toString());
+                logger.debug("received sample {}", map);
             }
             long dummyVersion = System.nanoTime(); // TODO: use a real versioning system
             var indexResult = new IndexResult(
@@ -264,8 +296,279 @@ public class MetricsEngine extends InternalEngine {
     }
 
     @Override
+    public DeleteResult delete(Delete delete) throws IOException {
+        // For now, just return a success result without actually deleting
+        return new DeleteResult(1L, delete.primaryTerm(), delete.seqNo(), false);
+    }
+
+    @Override
+    public NoOpResult noOp(NoOp noOp) throws IOException {
+        return new NoOpResult(noOp.primaryTerm(), noOp.seqNo());
+    }
+
+    @Override
+    public GetResult get(Get get, BiFunction<String, SearcherScope, Engine.Searcher> searcherFactory) throws EngineException {
+        // For now, return a simple result indicating the document doesn't exist
+        // This will be improved when we implement proper search functionality
+        return GetResult.NOT_EXISTS;
+    }
+
+    @Override
     public void refresh(String source) throws EngineException {
-        super.refresh(source);
+        // For now, do nothing - the head manages its own refresh cycle
+        refreshInternal(source, SearcherScope.EXTERNAL, true);
+    }
+
+    @Override
+    public boolean maybeRefresh(String source) throws EngineException {
+        return refreshInternal(source, SearcherScope.EXTERNAL, false);
+    }
+
+    private boolean refreshInternal(String source, SearcherScope scope, boolean force) {
+        // For now, return false - no refresh needed
+        try {
+            var refManager = this.getReferenceManager(scope);
+            if (force) {
+                refManager.maybeRefreshBlocking();
+                return true; // Indicate that a refresh was performed
+            } else {
+                return refManager.maybeRefresh();
+            }
+        } catch (IOException e) {
+            throw new RefreshFailedEngineException(shardId, e);
+        }
+    }
+
+    @Override
+    public void writeIndexingBuffer() throws EngineException {
+        refreshInternal("writeIndexingBuffer", SearcherScope.INTERNAL, true);
+    }
+
+    @Override
+    public boolean shouldPeriodicallyFlush() {
+        // For now, return false - no periodic flush needed
+        return false;
+    }
+
+    @Override
+    public void flush(boolean force, boolean waitIfOngoing) throws EngineException {
+        // For now, do nothing - the head manages its own flush cycle
+        try {
+            this.head.getLiveSeriesIndex().commit(force, waitIfOngoing);
+        } catch (IOException e) {
+            throw new FlushFailedEngineException(shardId, e);
+        }
+    }
+
+    @Override
+    public void forceMerge(boolean flush, int maxNumSegments, boolean onlyExpungeDeletes, boolean upgrade, boolean upgradeOnlyAncientSegments, String forceMergeUUID) throws EngineException, IOException {
+        // For now, do nothing - no force merge needed
+    }
+
+    @Override
+    public GatedCloseable<IndexCommit> acquireLastIndexCommit(boolean flushFirst) throws EngineException {
+        // For now, return null - no index commits in metrics engine
+        return null;
+    }
+
+    @Override
+    public GatedCloseable<IndexCommit> acquireSafeIndexCommit() throws EngineException {
+        // For now, return null - no safe index commits in metrics engine
+        return null;
+    }
+
+    @Override
+    public SafeCommitInfo getSafeCommitInfo() {
+        // For now, return a simple safe commit info
+        return new SafeCommitInfo(0L, 0);
+    }
+
+    @Override
+    public Closeable acquireHistoryRetentionLock() {
+        // For now, return a no-op closeable
+        return () -> {};
+    }
+
+    @Override
+    public Translog.Snapshot newChangesSnapshot(String source, long fromSeqNo, long toSeqNo, boolean requiredFullRange, boolean accurateCount) throws IOException {
+        // For now, return an empty snapshot
+        return new Translog.Snapshot() {
+            @Override
+            public Translog.Operation next() {
+                return null;
+            }
+
+            @Override
+            public void close() {
+                // No-op
+            }
+
+            @Override
+            public int totalOperations() {
+                return 0;
+            }
+        };
+    }
+
+    @Override
+    public int countNumberOfHistoryOperations(String source, long fromSeqNo, long toSeqNumber) throws IOException {
+        // For now, return 0
+        return 0;
+    }
+
+    @Override
+    public boolean hasCompleteOperationHistory(String reason, long startingSeqNo) {
+        // For now, return true
+        return true;
+    }
+
+    @Override
+    public long getMinRetainedSeqNo() {
+        // For now, return 0
+        return 0;
+    }
+
+    @Override
+    public long getPersistedLocalCheckpoint() {
+        // For now, return 0
+        return 0;
+    }
+
+    @Override
+    public long getProcessedLocalCheckpoint() {
+        // For now, return 0
+        return 0;
+    }
+
+    @Override
+    public SeqNoStats getSeqNoStats(long globalCheckpoint) {
+        // For now, return a simple seq no stats
+        return new SeqNoStats(0L, 0L, 0L);
+    }
+
+    @Override
+    public long getLastSyncedGlobalCheckpoint() {
+        // For now, return 0
+        return 0;
+    }
+
+    @Override
+    public long getIndexBufferRAMBytesUsed() {
+        // For now, return 0
+        return 0;
+    }
+
+    @Override
+    public List<Segment> segments(boolean verbose) {
+        // For now, return an empty list
+        return new ArrayList<>();
+    }
+
+    @Override
+    public void activateThrottling() {
+        isThrottled.set(true);
+    }
+
+    @Override
+    public void deactivateThrottling() {
+        isThrottled.set(false);
+    }
+
+    @Override
+    public int fillSeqNoGaps(long primaryTerm) throws IOException {
+        // For now, return 0
+        return 0;
+    }
+
+    @Override
+    public void maybePruneDeletes() {
+        // For now, do nothing
+    }
+
+    @Override
+    public void updateMaxUnsafeAutoIdTimestamp(long newTimestamp) {
+        maxUnsafeAutoIdTimestamp.updateAndGet(curr -> Math.max(curr, newTimestamp));
+    }
+
+    @Override
+    public long getMaxSeqNoOfUpdatesOrDeletes() {
+        return maxSeqNoOfUpdatesOrDeletes.get();
+    }
+
+    @Override
+    public void advanceMaxSeqNoOfUpdatesOrDeletes(long maxSeqNoOfUpdatesOnPrimary) {
+        maxSeqNoOfUpdatesOrDeletes.updateAndGet(curr -> Math.max(curr, maxSeqNoOfUpdatesOnPrimary));
+    }
+
+    @Override
+    public long getIndexThrottleTimeInMillis() {
+        return throttleTimeMillisMetric.count();
+    }
+
+    @Override
+    public boolean isThrottled() {
+        return isThrottled.get();
+    }
+
+    @Override
+    public TranslogManager translogManager() {
+        return translogManager;
+    }
+
+    @Override
+    protected SegmentInfos getLastCommittedSegmentInfos() {
+        // For now, return null - no segment infos in metrics engine
+        return null;
+    }
+
+    @Override
+    protected SegmentInfos getLatestSegmentInfos() {
+        // For now, return null - no segment infos in metrics engine
+        return null;
+    }
+
+    @Override
+    protected ReferenceManager<OpenSearchDirectoryReader> getReferenceManager(SearcherScope scope) {
+        // ReferenceManager for LiveSeriesIndex
+        return head.getLiveSeriesIndex().getOpenSearchReaderManager();
+    }
+
+    @Override
+    protected void closeNoLock(String reason, CountDownLatch closedLatch) {
+        try {
+            if (head != null) {
+                head.close();
+            }
+            if (executor != null) {
+                executor.close();
+            }
+        } catch (Exception e) {
+            logger.warn("Error closing metrics engine", e);
+        } finally {
+            closedLatch.countDown();
+        }
+    }
+
+    @Override
+    public String getHistoryUUID() {
+        return historyUUID;
+    }
+
+    @Override
+    public long getWritingBytes() {
+        // For now, return 0
+        return 0;
+    }
+
+    @Override
+    public CompletionStats completionStats(String... fieldNamePatterns) {
+        // For now, return a simple completion stats
+        return new CompletionStats(0L, null);
+    }
+
+    @Override
+    public long getMaxSeenAutoIdTimestamp() {
+        return maxSeenAutoIdTimestamp.get();
     }
 
     /**

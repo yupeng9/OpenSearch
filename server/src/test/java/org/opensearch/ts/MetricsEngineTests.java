@@ -56,11 +56,15 @@ public class MetricsEngineTests extends EngineTestCase {
     private ClusterApplierService clusterApplierService;
     private MapperService mapperService;
 
+    // TODO: figure out mapping
+    //  If we want to use `nested` field, the parent doc must contain a `_primary_term` field because the query stack
+    //  will implicitly add a `FieldExistsQuery(field=_primary_term)` for nested index schema queries. And since
+    //  we're not actually doing a nested field/lucene block join, we should probably not use nested type to describe
+    //  this.
     private static final String MAPPING = """
         {
           "properties": {
             "labels": {
-              "type": "nested",
               "properties": {
                 "name": {
                   "type": "keyword"
@@ -71,7 +75,6 @@ public class MetricsEngineTests extends EngineTestCase {
               }
             },
             "samples": {
-              "type": "nested",
               "properties": {
                 "value": {
                   "type": "float"

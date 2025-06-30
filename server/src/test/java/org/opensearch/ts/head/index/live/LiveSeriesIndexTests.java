@@ -8,6 +8,7 @@
 
 package org.opensearch.ts.head.index.live;
 
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.test.OpenSearchTestCase;
 import org.opensearch.ts.model.Labels;
 
@@ -17,12 +18,14 @@ import java.util.List;
 public class LiveSeriesIndexTests extends OpenSearchTestCase {
 
     public void testHeadIndex() throws IOException, InterruptedException {
-        LiveSeriesIndex headIndex = new LiveSeriesIndex();
+        LiveSeriesIndex headIndex = new LiveSeriesIndex(new ShardId("test", "test", 1));
         headIndex.addSeries(Labels.fromStrings("k1", "v1", "k2", "v2"), 0L, 100L);
         headIndex.addSeries(Labels.fromStrings("k1", "v1", "k3", "v3"), 10L, 100L);
         headIndex.addSeries(Labels.fromStrings("k1", "v1", "k4", "v4"), 20L, 200L);
 
-        Thread.sleep(2000); // allow time for the index to refresh after insertion
+        // allow time for the index to refresh after insertion
+        headIndex.getOpenSearchReaderManager().maybeRefreshBlocking();
+//        Thread.sleep(2000);
 
         // search by labels/minTimestamp
         List<Long> refs = headIndex.getReferences("/k1:v1/", 50);
@@ -39,7 +42,10 @@ public class LiveSeriesIndexTests extends OpenSearchTestCase {
 
         // deletion
         headIndex.removeSeries(List.of(0L, 10L));
-        Thread.sleep(2000); // allow time for the index to refresh after deletion
+
+        // allow time for the index to refresh after deletion
+        headIndex.getOpenSearchReaderManager().maybeRefreshBlocking();
+//        Thread.sleep(2000); // allow time for the index to refresh after deletion
 
         refs = headIndex.getReferences("/k1:v1/", 50);
         assertEquals(List.of(20L), refs);
