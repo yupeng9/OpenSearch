@@ -188,19 +188,10 @@ public class MetricsEngineIT extends OpenSearchIntegTestCase {
         }
     }
 
-    @Ignore // TODO: enabled when fixed
     public void testIndexSampleBulk() {
         ensureGreen(TEST_INDEX_NAME);
 
         try (Client client = client()) {
-            // TODO: Use bulk API when supported, Bulk requires translog to be implemented in a specific way, it expects the translog location to be increasing, otherwise it fails with error
-            /*
-            WARNING: Uncaught exception in thread: Thread[#77,opensearch[node_s0][write][T#1],5,TGRP-MetricsEngineIT]
-java.lang.AssertionError: translog locations are not increasing
-	at __randomizedtesting.SeedInfo.seed([49501233CC48F1B0]:0)
-	at org.opensearch.action.support.replication.TransportWriteAction.locationToSync(TransportWriteAction.java:246)
-             */
-
             var bulkResponse = client.prepareBulk()
                 .add(
                     client.prepareIndex(TEST_INDEX_NAME)

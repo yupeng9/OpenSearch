@@ -81,6 +81,17 @@ curl -X POST -H 'Content-Type: application/json' http://localhost:9200/my-index/
 }'
 ```
 
+#### Bulk API
+```bash
+curl -X POST -H 'Content-Type: application/json' http://localhost:9200/my-index/_bulk --data-binary '
+{ "index": { "_index": "my-index" } }
+{"labels":[{"name":"__name__","value":"http_requests_total"},{"name":"method","value":"POST"},{"name":"handler","value":"/api/stores"},{"name":"status","value":"200"}],"samples":[{"value":10.1,"timestamp":1633072800000},{"value":11.5,"timestamp":1633076400000}]}
+{ "index": { "_index": "my-index" } }
+{"labels":[{"name":"__name__","value":"http_requests_total"},{"name":"method","value":"GET"},{"name":"handler","value":"/api/products"},{"name":"status","value":"404"}],"samples":[{"value":5.3,"timestamp":1633072800000},{"value":6.7,"timestamp":1633076400000}]}
+'
+```
+
+
 Refresh to trigger segment flush and reader refresh so that the indexed documents are searchable.
 ```bash
 curl -XGET http://localhost:9200/my-index/_refresh
