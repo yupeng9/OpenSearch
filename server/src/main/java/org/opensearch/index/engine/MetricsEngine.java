@@ -16,11 +16,17 @@ import org.opensearch.common.lucene.index.OpenSearchDirectoryReader;
 import org.opensearch.common.metrics.CounterMetric;
 import org.opensearch.common.util.concurrent.ReleasableLock;
 import org.opensearch.common.xcontent.XContentHelper;
+import org.opensearch.common.xcontent.XContentType;
+import org.opensearch.common.xcontent.smile.SmileXContent;
+import org.opensearch.core.common.bytes.BytesReference;
+import org.opensearch.core.xcontent.XContentBuilder;
+import org.opensearch.index.seqno.LocalCheckpointTracker;
 import org.opensearch.index.seqno.SeqNoStats;
-import org.opensearch.index.translog.NoOpTranslogManager;
+import org.opensearch.index.seqno.SequenceNumbers;
+import org.opensearch.index.translog.InternalTranslogManager;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.index.translog.TranslogManager;
-import org.opensearch.index.translog.TranslogStats;
+import org.opensearch.index.translog.listener.TranslogEventListener;
 import org.opensearch.search.suggest.completion.CompletionStats;
 import org.opensearch.ts.Appender;
 import org.opensearch.ts.block.LuceneDocPerChunkBlock;
@@ -28,6 +34,7 @@ import org.opensearch.ts.compactor.Compactor;
 import org.opensearch.ts.compactor.LuceneDocPerChunkCompactor;
 import org.opensearch.ts.head.Head;
 import org.opensearch.ts.head.HeadAppender;
+import org.opensearch.ts.head.MemSeries;
 import org.opensearch.ts.head.RangeHead;
 import org.opensearch.ts.head.index.chunk.ClosedChunkIndex;
 import org.opensearch.ts.model.Labels;
@@ -41,6 +48,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -52,10 +60,9 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.BiFunction;
-import java.util.function.Function;
+import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
-import static org.opensearch.index.translog.Translog.EMPTY_TRANSLOG_SNAPSHOT;
 
 /**
  * An engine for Metrics
@@ -83,6 +90,8 @@ public class MetricsEngine extends Engine {
     private final ReleasableLock throttleLock = new ReleasableLock(new ReentrantLock());
     private final TranslogManager translogManager;
     private final String historyUUID;
+    private final LocalCheckpointTracker localCheckpointTracker;
+    private final LongSupplier primaryTermSupplier;
 
     public MetricsEngine(EngineConfig engineConfig) throws IOException {
         this(engineConfig, null);
@@ -102,37 +111,68 @@ public class MetricsEngine extends Engine {
 
         head = new Head(metricsStorePath, engineConfig.getShardId());
 
-        // Create a simple translog manager for now
-        this.translogManager = new NoOpTranslogManager(
-            shardId,
-            readLock,
-            this::ensureOpen,
-            new TranslogStats(),
-            EMPTY_TRANSLOG_SNAPSHOT,
-            "metrics-translog-uuid",
-            true
-        );
 
-        // Try to load history UUID from store, or generate a consistent one
-        String historyUUIDValue;
+        store.incRef();
         try {
-            final Map<String, String> userData = store.readLastCommittedSegmentsInfo().getUserData();
-            String existingHistoryUUID = userData.get(HISTORY_UUID_KEY);
-            if (existingHistoryUUID != null) {
-                historyUUIDValue = existingHistoryUUID;
-            } else {
-                // Generate a consistent history UUID based on the shard path
+            this.localCheckpointTracker = createLocalCheckpointTracker();
+            String translogUUID = Objects.requireNonNull(store.readLastCommittedSegmentsInfo().getUserData().get(Translog.TRANSLOG_UUID_KEY));
+            this.translogManager = new InternalTranslogManager(
+                engineConfig.getTranslogConfig(),
+                engineConfig.getPrimaryTermSupplier(),
+                engineConfig.getGlobalCheckpointSupplier(),
+                getTranslogDeletionPolicy(engineConfig),
+                shardId,
+                readLock,
+                this::getLocalCheckpointTracker,
+                translogUUID,
+                TranslogEventListener.NOOP_TRANSLOG_EVENT_LISTENER,
+                this::ensureOpen,
+                engineConfig.getTranslogFactory(),
+                engineConfig.getStartedPrimarySupplier()
+            );
+            this.primaryTermSupplier = engineConfig.getPrimaryTermSupplier();
+
+            // Try to load history UUID from store, or generate a consistent one
+            String historyUUIDValue;
+            try {
+                final Map<String, String> userData = store.readLastCommittedSegmentsInfo().getUserData();
+                String existingHistoryUUID = userData.get(HISTORY_UUID_KEY);
+                if (existingHistoryUUID != null) {
+                    historyUUIDValue = existingHistoryUUID;
+                } else {
+                    // Generate a consistent history UUID based on the shard path
+                    historyUUIDValue = "metrics-history-" + engineConfig.getShardId().toString().hashCode();
+                }
+            } catch (Exception e) {
+                // If we can't read from store, generate a consistent history UUID
                 historyUUIDValue = "metrics-history-" + engineConfig.getShardId().toString().hashCode();
             }
-        } catch (Exception e) {
-            // If we can't read from store, generate a consistent history UUID
-            historyUUIDValue = "metrics-history-" + engineConfig.getShardId().toString().hashCode();
+            this.historyUUID = historyUUIDValue;
+        } finally {
+            store.decRef(); // Ensure we release the store reference
         }
-        this.historyUUID = historyUUIDValue;
 
+        loadMemSeries();
 
         executor = Executors.newScheduledThreadPool(2); // TODO check os packages
         startBackgroundJobs();
+    }
+
+    private LocalCheckpointTracker createLocalCheckpointTracker() throws IOException {
+        final long maxSeqNo;
+        final long localCheckpoint;
+        final SequenceNumbers.CommitInfo seqNoStats = SequenceNumbers.loadSeqNoInfoFromLuceneCommit(
+            store.readLastCommittedSegmentsInfo().userData.entrySet()
+        );
+        maxSeqNo = seqNoStats.maxSeqNo;
+        localCheckpoint = seqNoStats.localCheckpoint;
+
+        // Initialize local checkpoint tracker with the max seq no and local checkpoint from the store
+        return new LocalCheckpointTracker(maxSeqNo, localCheckpoint);
+    }
+
+    private LocalCheckpointTracker getLocalCheckpointTracker() {
+        return localCheckpointTracker;
     }
 
     protected MetricsAppender newAppender() {
@@ -145,6 +185,7 @@ public class MetricsEngine extends Engine {
             closeChunksLock.lock();
             try {
                 head.closeHeadChunks();
+                head.getLiveSeriesIndex().commitWithMetadata(head.getStripeSeries().getSeries());
             } finally {
                 closeChunksLock.unlock();
             }
@@ -160,6 +201,7 @@ public class MetricsEngine extends Engine {
         metricsStorePath = null;
         head.close();
         executor.close();
+        translogManager.close();
         super.close();
     }
 
@@ -197,6 +239,10 @@ public class MetricsEngine extends Engine {
         }
 
         closedChunkIndex.close();
+    }
+
+    private void loadMemSeries() {
+        head.getLiveSeriesIndex().loadSeriesFromIndex(head);
     }
 
     public Querier querier(long minTimetamp, long maxTimestamp) {
@@ -266,16 +312,34 @@ public class MetricsEngine extends Engine {
     @Override
     public IndexResult index(Index index) throws IOException {
         try {
-            Map<String, Object> map = XContentHelper.convertToMap(index.parsedDoc().source(), false, index.parsedDoc().getMediaType()).v2();
+            // Generate new seq number, or catch up
+            if (index.origin() == Operation.Origin.PRIMARY) {
+                index = new Index(
+                    index.uid(),
+                    index.parsedDoc(),
+                    localCheckpointTracker.generateSeqNo(),
+                    index.primaryTerm(),
+                    index.version(),
+                    index.versionType(),
+                    index.origin(),
+                    index.startTime(),
+                    index.getAutoGeneratedIdTimestamp(),
+                    index.isRetry(),
+                    index.getIfSeqNo(),
+                    index.getIfPrimaryTerm());
+            } else {
+                localCheckpointTracker.advanceMaxSeqNo(index.seqNo());
+            }
 
+            Map<String, Object> map = XContentHelper.convertToMap(index.parsedDoc().source(), false, index.parsedDoc().getMediaType()).v2();
             MetricDocument metricDocument = MetricDocument.fromJson(map);
 
-            Appender headAppender = newAppender();
+            Appender appender = newAppender();
             long seriesRef = 0;
             for (MetricDocument.Sample sample : metricDocument.samples) {
-                seriesRef = headAppender.append(seriesRef, metricDocument.labels, sample.timestamp, sample.value);
+                seriesRef = appender.append(seriesRef, metricDocument.labels, sample.timestamp, sample.value);
             }
-            headAppender.commit();
+            appender.commit();
 
             if (logger.isDebugEnabled()) {
                 logger.debug("received sample {}", map);
@@ -287,6 +351,28 @@ public class MetricsEngine extends Engine {
                 index.seqNo(),
                 true
             );
+
+            // TODO refine interfaces, Appender handles creating multiple series per appender, but Index() only accepts a single series
+            List<MemSeries> series = appender.createdSeries();
+            if (series.isEmpty()) {
+                // If no series were created, then rewrite the source without labels and with the seriesRef
+                try (XContentBuilder builder = SmileXContent.contentBuilder()) {
+                    builder.startObject();
+                    builder.field("series_ref", seriesRef);
+                    builder.startArray("samples");
+                    for (MetricDocument.Sample sample : metricDocument.samples) {
+                        builder.startObject();
+                        builder.field("timestamp", sample.timestamp);
+                        builder.field("value", sample.value);
+                        builder.endObject();
+                    }
+                    builder.endArray();
+                    builder.endObject();
+                    index.parsedDoc().setSource(BytesReference.bytes(builder), XContentType.SMILE);
+                }
+            }
+            // TODO it may be necessary to re-write the source to include the seriesRef anyway, for deterministic replay (or, add locking)
+
             final var location = translogManager.add(new Translog.Index(index, indexResult));
             indexResult.setTranslogLocation(location);
             return indexResult;
@@ -602,6 +688,11 @@ public class MetricsEngine extends Engine {
         }
 
         @Override
+        public List<MemSeries> createdSeries() {
+            return headAppender.createdSeries();
+        }
+
+        @Override
         public void abort() {
 
         }
@@ -625,14 +716,16 @@ public class MetricsEngine extends Engine {
      *                "timestamp": 1712576200.000,
      *                "value":1024
      *              }
-     *            ]
+     *            ],
+     *            "seriesRef": 1234
      *          }
      *         """
      * </pre>
      */
-    public record MetricDocument(Labels labels, List<Sample> samples) {
+    public record MetricDocument(Labels labels, List<Sample> samples, SeriesRef seriesRef) {
         public record Label(String name, String value) { }
         public record Sample(long timestamp, double value) { }
+        public record SeriesRef(long ref) { }
 
         public static MetricDocument fromJson(Map<String, Object> source) {
             var inputLabels = (List<Map<String, String>>) source.getOrDefault("labels", List.of());
@@ -651,7 +744,11 @@ public class MetricsEngine extends Engine {
                     ((Number) sample.get("value")).doubleValue()
                 )).toList();
 
-            return new MetricDocument(labels, _samples);
+
+            Number seriesRefValue = (Number) source.getOrDefault("seriesRef", null);
+            SeriesRef seriesRef = seriesRefValue == null ? null : new SeriesRef(seriesRefValue.longValue());
+
+            return new MetricDocument(labels, _samples, seriesRef);
         }
     }
 }

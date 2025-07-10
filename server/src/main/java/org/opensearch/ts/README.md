@@ -16,6 +16,9 @@ curl -X PUT -H 'Content-Type: application/json' http://localhost:9200/my-index -
   },
   "mappings": {
     "properties": {
+        "series_ref": {
+          "type": "long"
+        },
         "labels": {
           "properties": {
             "name": {

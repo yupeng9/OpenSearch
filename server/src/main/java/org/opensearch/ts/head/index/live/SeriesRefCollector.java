@@ -19,7 +19,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-public class LiveSeriesIndexCollector implements Collector {
+public class SeriesRefCollector implements Collector {
 
     private final List<Long> references = new ArrayList<>();
 

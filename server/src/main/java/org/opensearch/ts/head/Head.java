@@ -18,7 +18,6 @@ import org.opensearch.ts.chunks.ChunkReader;
 import org.opensearch.ts.model.Labels;
 import org.opensearch.ts.model.SeriesSet;
 import org.opensearch.ts.query.Querier;
-import org.apache.lucene.index.IndexReader;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -55,11 +54,11 @@ public class Head implements BlockReader {
             throw new RuntimeException("Failed to create head directory: " + headDir, e);
         }
 
-        liveSeriesIndex = new LiveSeriesIndex(shardId);
         try {
+            liveSeriesIndex = new LiveSeriesIndex(shardId, headDir);
             closedChunkIndex = new ClosedChunkIndex(headDir);
         } catch (IOException e) {
-            throw new RuntimeException("Failed to initialize ClosedChunkIndex", e);
+            throw new RuntimeException("Failed to initialize indexes", e);
         }
     }
 
@@ -97,13 +96,13 @@ public class Head implements BlockReader {
     /**
      * @param timestamp timestamp of the sample that triggered series creation, used to set minTime
      */
-    public MemSeries createSeries(long hash, Labels labels, boolean pendingCommit, long timestamp) {
+    public HeadAppender.SeriesResult getOrCreateSeries(long hash, Labels labels, boolean pendingCommit, long timestamp) {
         MemSeries series = stripeSeries.getByHash(hash, labels);
         if (series != null) {
-            return series;
+            return new HeadAppender.SeriesResult(series, false);
         }
         long id = seriesId.incrementAndGet();
-        return createSeries(id, hash, labels, pendingCommit, timestamp);
+        return new HeadAppender.SeriesResult(createSeries(id, hash, labels, pendingCommit, timestamp), true);
     }
 
     public ShardId getShardId() {
@@ -116,6 +115,11 @@ public class Head implements BlockReader {
         liveSeriesIndex.addSeries(labels, newSeries.getReference(), timestamp);
         numSeries.incrementAndGet();
         return newSeries;
+    }
+
+    public void loadExistingSeries(MemSeries series) {
+        stripeSeries.set(series.getLabels().hashCode(), series);
+        numSeries.incrementAndGet();
     }
 
 
@@ -227,6 +231,7 @@ public class Head implements BlockReader {
             for (MemChunk memChunk : chunksToClose) {
                 try {
                     closedChunkIndex.addNewChunk(series.getLabels(), memChunk);
+                    series.setMaxMmapTimestamp(memChunk.getMaxTimestamp());
                     seriesToClosedChunks.computeIfAbsent(series, k -> new HashSet<>()).add(memChunk);
                 } catch (IOException e) {
                     // todo: error handling, retry failed chunks?
@@ -273,6 +278,10 @@ public class Head implements BlockReader {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public long getNumSeries() {
+        return numSeries.get();
     }
 
     /**

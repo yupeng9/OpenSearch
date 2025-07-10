@@ -14,7 +14,6 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.document.NumericDocValuesField;
-import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
@@ -24,16 +23,26 @@ import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.MMapDirectory;
+import org.opensearch.common.io.stream.BytesStreamOutput;
 import org.opensearch.common.lucene.index.OpenSearchDirectoryReader;
+import org.opensearch.core.common.io.stream.BytesStreamInput;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.engine.OpenSearchReaderManager;
+import org.opensearch.ts.head.Head;
+import org.opensearch.ts.head.MemSeries;
 import org.opensearch.ts.model.Labels;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.opensearch.ts.head.index.IndexUtils.LABELS_FIELD;
 import static org.opensearch.ts.head.index.IndexUtils.MIN_TIMESTAMP_FIELD;
@@ -43,6 +52,7 @@ import static org.opensearch.ts.head.index.IndexUtils.REFERENCE_FIELD;
  * LiveChunkIndex indexes series in the head block which have open chunks.
  */
 public class LiveSeriesIndex {
+    private static final String SERIES_METADATA_KEY = "live_series_metadata";
 
     private final Analyzer analyzer;
     private final Directory directory;
@@ -53,9 +63,14 @@ public class LiveSeriesIndex {
     private final OpenSearchDirectoryReader opensearchDirectoryReader;
     private boolean stopRefresh;
 
-    public LiveSeriesIndex(ShardId shardId) {
+    public LiveSeriesIndex(ShardId shardId, Path dir) throws IOException {
+        Path indexPath = dir.resolve("live_series_index");
+        if (Files.notExists(indexPath)) {
+            Files.createDirectory(indexPath);
+        }
+
         analyzer = new WhitespaceAnalyzer();
-        directory = new ByteBuffersDirectory(); // on heap since this impl only uses references to chunks
+        directory = new MMapDirectory(indexPath);
         try {
             indexWriter = new IndexWriter(directory, new IndexWriterConfig(analyzer));
 //            searcherManager = new SearcherManager(indexWriter, null);
@@ -88,7 +103,7 @@ public class LiveSeriesIndex {
     // todo: benchmark if minTimestamp actually helps, or if it's easier to resolve from matched series
     public void addSeries(Labels labels, long reference, long minTimestamp) {
         Document doc = new Document();
-        doc.add(new TextField(LABELS_FIELD, labels.toKeyValueString(), Field.Store.NO));
+        doc.add(new TextField(LABELS_FIELD, labels.toKeyValueString(), Field.Store.YES));
         // placeholder for local testing, adding this makes filter queris at the OpenSearch level work with our schema
         // mapping.
 //        for (var label : labels.toMapView().entrySet()) {
@@ -121,7 +136,7 @@ public class LiveSeriesIndex {
                     .add(LongPoint.newRangeQuery(MIN_TIMESTAMP_FIELD, minTimestamp, Long.MAX_VALUE), BooleanClause.Occur.FILTER)
                     .build();
 
-            LiveSeriesIndexCollectorManager collectorManager = new LiveSeriesIndexCollectorManager();
+            SeriesRefCollectorManager collectorManager = new SeriesRefCollectorManager();
             return searcher.search(query, collectorManager);
         } catch (IOException e) {
             throw new RuntimeException("Failed to get references", e);
@@ -136,6 +151,79 @@ public class LiveSeriesIndex {
                 }
             }
         }
+    }
+
+    /**
+     * Creates MemSeries in the given head based on references/labels stored in the index, as well as metadata in the LiveCommitData
+     */
+    public void loadSeriesFromIndex(Head head) {
+        OpenSearchDirectoryReader reader = null;
+        try {
+            // create MemSeries
+            reader = searcherManager.acquire();
+            IndexSearcher searcher = new IndexSearcher(reader);
+            searcher.search(new MatchAllDocsQuery(), new SeriesLoadingCollectorManager(head));
+
+            // update MemSeries with the saved timestamps
+            Iterable<Map.Entry<String, String>> commitData = indexWriter.getLiveCommitData();
+            if (commitData == null) {
+                return;
+            }
+
+            for (Map.Entry<String, String> entry : commitData) {
+                if (entry.getKey().equals(SERIES_METADATA_KEY)) {
+                    String seriesMetadata = entry.getValue();
+                    byte[] bytes = Base64.getDecoder().decode(seriesMetadata);
+                    try (BytesStreamInput input = new BytesStreamInput(bytes)) {
+                        while (input.available() > 0) {
+                            long ref = input.readVLong();
+                            long ts = input.readVLong();
+                            head.getStripeSeries().getById(ref).setMaxMmapTimestamp(ts);
+                        }
+                    }
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        } finally {
+            if (reader != null) {
+                try {
+                    searcherManager.release(reader);
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to release searcher", e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Commit the current state, including live series references and their max mmap timestamps. This data is used during translog replay to
+     * skip adding samples for data that has already been committed.
+     */
+    public void commitWithMetadata(List<MemSeries> liveSeries) {
+        Map<String, String> commitData = new HashMap<>();
+
+        try (BytesStreamOutput output = new BytesStreamOutput()) {
+            for (MemSeries series : liveSeries) {
+                output.writeVLong(series.getReference());
+                output.writeVLong(series.getMaxMmapTimestamp());;
+            }
+            String liveSeriesMetadata = new String(Base64.getEncoder().encode(output.bytes().toBytesRef().bytes));
+            commitData.put(SERIES_METADATA_KEY, liveSeriesMetadata);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to serialize live series", e);
+        }
+
+        try {
+            commitWithMetadata(() -> commitData.entrySet().iterator());
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to commit ", e);
+        }
+    }
+
+    private void commitWithMetadata(Iterable<Map.Entry<String, String>> commitData) throws IOException {
+        indexWriter.setLiveCommitData(commitData, true); // force increment version
+        indexWriter.commit();
     }
 
     public void close() throws IOException, InterruptedException {

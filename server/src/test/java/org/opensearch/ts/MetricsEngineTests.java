@@ -237,15 +237,13 @@ public class MetricsEngineTests extends EngineTestCase {
             createSampleJson(
                 new MetricsEngine.MetricDocument(
                     series1,
-                    List.of(
-                        new MetricsEngine.MetricDocument.Sample(1712576200L, 1024.0))
+                    List.of(new MetricsEngine.MetricDocument.Sample(1712576200L, 1024.0)), null
                 )
             ),
             createSampleJson(
                 new MetricsEngine.MetricDocument(
                     series1,
-                    List.of(
-                        new MetricsEngine.MetricDocument.Sample(1712576400L, 1026.0))
+                    List.of(new MetricsEngine.MetricDocument.Sample(1712576400L, 1026.0)), null
                 )
             ),
 
@@ -255,7 +253,8 @@ public class MetricsEngineTests extends EngineTestCase {
                     series2,
                     List.of(
                         new MetricsEngine.MetricDocument.Sample(1712576200L, 1024.0),
-                        new MetricsEngine.MetricDocument.Sample(1712576400L, 1026.0))
+                        new MetricsEngine.MetricDocument.Sample(1712576400L, 1026.0)
+                    ), null
                 )
             )
         );

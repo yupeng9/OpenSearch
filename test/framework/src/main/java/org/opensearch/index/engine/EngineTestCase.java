@@ -1609,7 +1609,7 @@ public abstract class EngineTestCase extends OpenSearchTestCase {
      * Exposes a translog associated with the given engine for testing purpose.
      */
     public static Translog getTranslog(Engine engine) {
-        assert engine instanceof InternalEngine || engine instanceof NRTReplicationEngine
+        assert engine instanceof InternalEngine || engine instanceof NRTReplicationEngine || engine instanceof MetricsEngine
             : "only InternalEngines or NRTReplicationEngines have translogs, got: " + engine.getClass();
         engine.ensureOpen();
         TranslogManager translogManager = engine.translogManager();

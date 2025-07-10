@@ -15,16 +15,16 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-public class LiveSeriesIndexCollectorManager implements CollectorManager<LiveSeriesIndexCollector, List<Long>> {
+public class SeriesRefCollectorManager implements CollectorManager<SeriesRefCollector, List<Long>> {
     @Override
-    public LiveSeriesIndexCollector newCollector() throws IOException {
-        return new LiveSeriesIndexCollector();
+    public SeriesRefCollector newCollector() throws IOException {
+        return new SeriesRefCollector();
     }
 
     @Override
-    public List<Long> reduce(Collection<LiveSeriesIndexCollector> collectors) throws IOException {
+    public List<Long> reduce(Collection<SeriesRefCollector> collectors) throws IOException {
         List<Long> refs = new ArrayList<>();
-        for (LiveSeriesIndexCollector collector : collectors) {
+        for (SeriesRefCollector collector : collectors) {
             List<Long> collectorRefs = collector.getReferences();
             if (collectorRefs != null) {
                 refs.addAll(collectorRefs);

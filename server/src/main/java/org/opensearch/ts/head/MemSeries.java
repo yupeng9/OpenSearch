@@ -41,6 +41,9 @@ public class MemSeries {
     // Max timestamp of the head chunk, used for checking ooo/duplicates
     private long maxTimestamp;
 
+    // Max timestamp of a mmapped head chunk, used to skip samples during translog replay
+    private long maxMmapTimestamp;
+
     // timestamp at which to cut the next chunk
     private long nextAt;
 
@@ -166,6 +169,14 @@ public class MemSeries {
 
     public void setPendingGC(boolean pendingGC) {
         this.pendingGC = pendingGC;
+    }
+
+    public long getMaxMmapTimestamp() {
+        return maxMmapTimestamp;
+    }
+
+    public void setMaxMmapTimestamp(long maxMmapTimestamp) {
+        this.maxMmapTimestamp = maxMmapTimestamp;
     }
 
     public List<MemChunk> getClosableChunks() {

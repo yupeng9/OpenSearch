@@ -8,7 +8,10 @@
 
 package org.opensearch.ts;
 
+import org.opensearch.ts.head.MemSeries;
 import org.opensearch.ts.model.Labels;
+
+import java.util.List;
 
 /**
  * An appender provides a batched appends of samples.
@@ -26,6 +29,11 @@ public interface Appender {
     long append(long seriesRef, Labels labels, long timestamp, double value);
 
     void commit();
+
+    /**
+     * Returns all series that were creating by this appender.
+     */
+    List<MemSeries> createdSeries();
 
     void abort();
 }

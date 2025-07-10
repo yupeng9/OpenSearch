@@ -30,10 +30,12 @@ public class HeadAppender implements Appender {
 
     // TODO: do we need to track labels as in prometheus?
     // TODO: can we simplify this?
-    private List<Long> seriesRefs;  // holds ref id to the newly created series
-    private List<MemSeries> seriesList; // pointers to the new memSeries, same order as seriesRefs
+    private List<Long> seriesRefs;  // holds ref id to series that are being appended to
+    private List<MemSeries> seriesList; // pointers to the memSeries that are being appended to, same order as seriesRefs
     private List<RefSample> refSamples; // samples along with the series reference
     private List<MemSeries> sampleSeries; // pointers to the series corresponding to the samples
+    private List<MemSeries> newlyCreatedSeries; // holds ref id to the newly created series
+
 
     public HeadAppender(Head head, long minValidTimestamp, long minTime, long maxTime) {
         this.logger = Loggers.getLogger(HeadAppender.class, head.getShardId());
@@ -42,6 +44,7 @@ public class HeadAppender implements Appender {
         this.minTime = minTime;
         this.maxTime = maxTime;
 
+        newlyCreatedSeries = new ArrayList<>();
         seriesRefs = new ArrayList<>();
         seriesList = new ArrayList<>();
         refSamples = new ArrayList<>();
@@ -53,7 +56,11 @@ public class HeadAppender implements Appender {
         // TODO: ooo support
         MemSeries series = head.getStripeSeries().getById(seriesRef);
         if (series == null) {
-            series = createSeries(labels, timestamp);
+            series = getOrCreateSeries(labels, timestamp);
+        }
+        if (timestamp < series.getMaxMmapTimestamp()) {
+            // TODO ooo support
+            return series.getReference(); // during translog replay, skip appending samples that are older than the last mmap chunk
         }
         if (timestamp < minTime) {
             minTime = timestamp;
@@ -66,15 +73,18 @@ public class HeadAppender implements Appender {
         return series.getReference();
     }
 
-    public MemSeries createSeries(Labels labels, long timestamp) {
+    private MemSeries getOrCreateSeries(Labels labels, long timestamp) {
         if (labels.isEmpty()) {
             throw new IllegalArgumentException("Labels cannot be empty");
         }
 
-        MemSeries series = head.createSeries(labels.hashCode(), labels, true, timestamp);
-        seriesRefs.add(series.getReference());
-        seriesList.add(series);
-        return series;
+        SeriesResult seriesResult = head.getOrCreateSeries(labels.hashCode(), labels, true, timestamp);
+        seriesRefs.add(seriesResult.series().getReference());
+        seriesList.add(seriesResult.series());
+        if (seriesResult.created()) {
+            newlyCreatedSeries.add(seriesResult.series());
+        }
+        return seriesResult.series();
     }
 
     @Override
@@ -88,6 +98,11 @@ public class HeadAppender implements Appender {
 
         // TODO: commit metadata
         closed = true;
+    }
+
+    @Override
+    public List<MemSeries> createdSeries() {
+        return newlyCreatedSeries;
     }
 
     protected void commitSamples(CommitContext context) {
@@ -122,4 +137,6 @@ public class HeadAppender implements Appender {
     }
 
     public record CommitContext(ChunkOptions options) {}
+
+    public record SeriesResult(MemSeries series, boolean created) {}
 }

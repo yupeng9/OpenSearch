@@ -87,7 +87,7 @@ public class HeadTests extends OpenSearchTestCase {
         Labels seriesNoData = Labels.fromStrings("k1", "v1", "k2", "v2");
         Labels seriesWithData = Labels.fromStrings("k1", "v1", "k3", "v3");
 
-        MemSeries emptySeries = head.createSeries(seriesNoData.hashCode(), seriesNoData, true, 0L);
+        head.getOrCreateSeries(seriesNoData.hashCode(), seriesNoData, true, 0L);
         HeadAppender appender = head.newAppender();
         for (int i = 0; i < 8; i++) {
             appender.append(0, seriesWithData, i++, i);
