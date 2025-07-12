@@ -12,6 +12,8 @@ curl -X PUT -H 'Content-Type: application/json' http://localhost:9200/my-index -
     "index.metrics.enabled":true,
     "index.number_of_shards": 1,
     "index.number_of_replicas": 0,
+    "index.translog.durability": "async",
+    "index.translog.sync_interval": "1s",
     "refresh_interval": "1s"
   },
   "mappings": {
@@ -62,7 +64,10 @@ curl -X POST -H 'Content-Type: application/json' http://localhost:9200/my-index/
   ],
   "samples": [
     {"value": 10.1, "timestamp": 1633072800000},
-    {"value": 11.5, "timestamp": 1633076400000}
+    {"value": 11.5, "timestamp": 1633076400000},
+    {"value": 12.5, "timestamp": 1633076500000},
+    {"value": 13.5, "timestamp": 1633076600000},
+    {"value": 14.5, "timestamp": 1633076700000}
   ]
 }'
 ```

@@ -184,8 +184,11 @@ public class MetricsEngine extends Engine {
         executor.scheduleAtFixedRate(() -> {
             closeChunksLock.lock();
             try {
+                logger.info("MMAPing head chunks");
                 head.closeHeadChunks();
                 head.getLiveSeriesIndex().commitWithMetadata(head.getStripeSeries().getSeries());
+            } catch (Exception e) {
+                logger.error("Error while MMAPing head chunks", e);
             } finally {
                 closeChunksLock.unlock();
             }

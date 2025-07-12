@@ -95,6 +95,7 @@ public class MemSeries {
 
         // If we reach 25% of chunk's target sample count, try to tighten nextAt. Can help with cleaning stale series (churn)
         if (numSamples == options.samplesPerChunk() / 4) {
+            assert options.samplesPerChunk() >= 4 : "ChunkOptions.samplesPerChunk must be >= 4";
             this.nextAt = computeChunkEndTime(chunk.getMinTimestamp(), chunk.getMaxTimestamp(), this.nextAt, 4);
         }
 

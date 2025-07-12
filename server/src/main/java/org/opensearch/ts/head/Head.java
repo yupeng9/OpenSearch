@@ -231,6 +231,7 @@ public class Head implements BlockReader {
             for (MemChunk memChunk : chunksToClose) {
                 try {
                     closedChunkIndex.addNewChunk(series.getLabels(), memChunk);
+                    log.info("Closed chunk for series={}: minTime={}, maxTime={}, numSamples={}", series.getReference(), memChunk.getMinTimestamp(), memChunk.getMaxTimestamp(), memChunk.getChunk().numSamples());
                     series.setMaxMmapTimestamp(memChunk.getMaxTimestamp());
                     seriesToClosedChunks.computeIfAbsent(series, k -> new HashSet<>()).add(memChunk);
                 } catch (IOException e) {
